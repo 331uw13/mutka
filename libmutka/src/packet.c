@@ -197,10 +197,11 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
     return true;
 }
 
-int mutka_recv_incoming_packet(struct mutka_packet* packet, int socket_fd) {
+#include <stdio.h>
 
+int mutka_recv_incoming_packet(struct mutka_packet* packet, int socket_fd) {
     if(!mutka_socket_rdready_inms(socket_fd, 0)) {
-        return 0;
+        return M_NONEW_PACKET;
     }
 
     ssize_t recv_result = recv(
@@ -209,15 +210,15 @@ int mutka_recv_incoming_packet(struct mutka_packet* packet, int socket_fd) {
             packet->raw_packet.memsize, MSG_DONTWAIT);
 
     if(recv_result <= 0) {
-        return -1;
+        return M_LOST_CONNECTION;
     }
 
     packet->raw_packet.size = recv_result;
     if(!mutka_parse_rpacket(packet, &packet->raw_packet)) {
-        return -1;
+        return M_PACKET_PARSE_ERR;
     }
 
-    return recv_result;
+    return M_NEW_PACKET_AVAIL;
 }
 
 

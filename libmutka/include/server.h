@@ -21,6 +21,7 @@ struct mutka_server_cfg {
     int flags;
 
     void(*client_connected_callback)(struct mutka_server*, struct mutka_client*);
+    void(*client_disconnected_callback)(struct mutka_server*, struct mutka_client*);
     void(*packet_received_callback)(struct mutka_server*, struct mutka_client*);
 };
 
@@ -45,6 +46,7 @@ struct mutka_server {
 struct mutka_server* mutka_create_server(struct mutka_server_cfg config);
 void                 mutka_close_server(struct mutka_server* server);
 
+void mutka_server_remove_client(struct mutka_server* server, struct mutka_client* client);
 
 
 #endif

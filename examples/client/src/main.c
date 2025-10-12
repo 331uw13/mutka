@@ -10,7 +10,7 @@
 
 void packet_received(struct mutka_client* client) {
    
-    printf("%s\n", __func__);
+    printf("\033[32m%s\033[0m\n", __func__);
 
     for(uint32_t i = 0; i < client->inpacket.num_elements; i++) {
         struct mutka_packet_elem* elem = &client->inpacket.elements[i];
@@ -29,12 +29,6 @@ int main() {
     }
 
     client->packet_received_callback = packet_received;
-
-    mutka_rpacket_prep(&client->out_raw_packet, MPACKET_HANDSHAKE);
-    mutka_rpacket_add_ent(&client->out_raw_packet, "testentry", "hello_world", 11);
-    mutka_rpacket_add_ent(&client->out_raw_packet, "some other stuff", "watsup", 6);
-    mutka_send_rpacket(client->socket_fd, &client->out_raw_packet);
-
 
 
     printf("press enter to disconnect\n");

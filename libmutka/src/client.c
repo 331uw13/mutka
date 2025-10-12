@@ -91,6 +91,7 @@ void mutka_disconnect(struct mutka_client* client) {
     free(client);
 }
 
+#include <stdio.h>
 
 void* mutka_client_recv_thread(void* arg) {
     struct mutka_client* client = (struct mutka_client*)arg;
@@ -98,8 +99,12 @@ void* mutka_client_recv_thread(void* arg) {
         pthread_mutex_lock(&client->mutex);
 
         int rd = mutka_recv_incoming_packet(&client->inpacket, client->socket_fd);
-        if(rd > 0) {
+        if(rd == M_NEW_PACKET_AVAIL) {
             mutka_client_handle_packet(client);
+        }
+        else
+        if(rd == M_LOST_CONNECTION) {
+            printf("lost connection\n");
         }
 
         pthread_mutex_unlock(&client->mutex);

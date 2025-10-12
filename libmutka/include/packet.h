@@ -78,9 +78,16 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
 
 void mutka_clear_packet(struct mutka_packet* packet);
 
-// On success it parses raw packet elements into 'packet' and returns the packet size.
-// When no packet is to be read 0 is returned.
-// If it fails -1 is returned. 
+
+#define M_NONEW_PACKET 1
+#define M_NEW_PACKET_AVAIL 2
+#define M_LOST_CONNECTION 3
+#define M_PACKET_PARSE_ERR 4
+
+// This function is non blocking and will return following: 
+// M_NONEW_PACKET, M_NEW_PACKET_AVAIL, M_LOST_CONNECTION or M_PACKET_PARSE_ERR.
+//
+// if M_PACKET_PARSE_ERR is returned the error message can be read with mutka_get_errmsg()
 int mutka_recv_incoming_packet(struct mutka_packet* packet, int socket_fd);
 
 

@@ -16,6 +16,22 @@ static struct server_global {
 global;
 
 
+#include <stdio.h>
+
+static void lock_server_mutex_ifneed(struct mutka_server* server) {
+    pthread_t self = pthread_self();
+    if(self != global.recv_thread) {
+        pthread_mutex_lock(&server->mutex);
+    }
+}
+
+static void unlock_server_mutex_ifneed(struct mutka_server* server) {
+    pthread_t self = pthread_self();
+    if(self != global.recv_thread) {
+        pthread_mutex_unlock(&server->mutex);
+    }
+}
+
 void* mutka_server_acceptor_thread_func(void* arg);
 void* mutka_server_recvdata_thread_func(void* arg);
 void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client* client);
@@ -113,6 +129,31 @@ void mutka_close_server(struct mutka_server* server) {
     free(server);
 }
 
+
+
+
+void mutka_server_remove_client(struct mutka_server* server, struct mutka_client* client) {
+    lock_server_mutex_ifneed(server);
+
+    int remove_index = -1;
+
+    for(uint32_t i = 0; i < server->num_clients; i++) {
+        if(server->clients[i].socket_fd == client->socket_fd) {
+            remove_index = i;
+            break;
+        }
+    }
+    
+    if(remove_index >= 0) {
+        mutka_free_client(&server->clients[remove_index]);
+        for(uint32_t i = remove_index; i < server->num_clients-1; i++) {
+            server->clients[i] = server->clients[i+1];
+        }
+    }
+
+    unlock_server_mutex_ifneed(server);
+}
+
 void* mutka_server_acceptor_thread_func(void* arg) {
     struct mutka_server* server = (struct mutka_server*)arg;
     while(1) {
@@ -153,6 +194,7 @@ void* mutka_server_acceptor_thread_func(void* arg) {
     return NULL;
 }
 
+
 void* mutka_server_recvdata_thread_func(void* arg) {
     struct mutka_server* server = (struct mutka_server*)arg;
 
@@ -163,8 +205,14 @@ void* mutka_server_recvdata_thread_func(void* arg) {
             struct mutka_client* client = &server->clients[i];
            
             int rd = mutka_recv_incoming_packet(&server->inpacket, client->socket_fd);
-            if(rd > 0) {
+            if(rd == M_NEW_PACKET_AVAIL) {
                 mutka_server_handle_packet(server, client);
+            }
+            else
+            if(rd == M_LOST_CONNECTION) {
+                server->config.client_disconnected_callback(server, client);
+                mutka_server_remove_client(server, client);
+                i--;
             }
         }
 
@@ -175,15 +223,12 @@ void* mutka_server_recvdata_thread_func(void* arg) {
 }
 
 
-#include <stdio.h>
 
 void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client* client) {
     // NOTE: server->mutex is locked here.
 
     switch(server->inpacket.id) {
         case MPACKET_HELLO:
-            printf("(CLIENT INITIATED THE HANDSHAKE)\n");
-            printf("(RESPOND WITH GENERATED METADATA PUBLIC KEY)\n");
 
             mutka_openssl_X25519_keypair(&client->metadata_keys);
             mutka_rpacket_prep(&server->out_raw_packet, MPACKET_HANDSHAKE);
@@ -193,7 +238,7 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
 
             mutka_bytes_to_hexstr(&client->metadata_keys.public_key, &pubkey_hexstr);
             mutka_rpacket_add_ent(&server->out_raw_packet, 
-                    "metadata_pubkey", pubkey_hexstr.bytes, pubkey_hexstr.size);
+                    "metadata_publkey", pubkey_hexstr.bytes, pubkey_hexstr.size);
             
             mutka_send_rpacket(client->socket_fd, &server->out_raw_packet);
             
