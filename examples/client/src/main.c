@@ -3,9 +3,21 @@
 #include <unistd.h>
 #include <string.h>
 #include "../../../libmutka/include/mutka.h"
+#include "../../../libmutka/include/cryptography.h"
 
 
 
+
+void packet_received(struct mutka_client* client) {
+   
+    printf("%s\n", __func__);
+
+    for(uint32_t i = 0; i < client->inpacket.num_elements; i++) {
+        struct mutka_packet_elem* elem = &client->inpacket.elements[i];
+        printf("[%i] -> %s:%s\n", i, elem->label.bytes, elem->data.bytes);
+    }
+
+}
 
 
 
@@ -16,6 +28,7 @@ int main() {
         return 1;
     }
 
+    client->packet_received_callback = packet_received;
 
     mutka_rpacket_prep(&client->out_raw_packet, MPACKET_HANDSHAKE);
     mutka_rpacket_add_ent(&client->out_raw_packet, "testentry", "hello_world", 11);
@@ -23,26 +36,10 @@ int main() {
     mutka_send_rpacket(client->socket_fd, &client->out_raw_packet);
 
 
-    while(1) {
 
-        int rd = mutka_recv_incoming_packet(&client->inpacket, client->socket_fd);
-       
-        if(rd > 0) {
-         
-            for(uint32_t i = 0; i < client->inpacket.num_elements; i++) {
-                struct mutka_packet_elem* elem = &client->inpacket.elements[i];
-                printf("%s:%s\n", elem->label.bytes, elem->data.bytes);
-            }
-
-            break;
-        }
-        else 
-        if(rd < 0) {
-            printf("ERROR: %s\n", mutka_get_errmsg());
-            continue;
-        }
-        
-    }
+    printf("press enter to disconnect\n");
+    char tmp = 0;
+    read(1, &tmp, 1);
 
    
     mutka_disconnect(client);

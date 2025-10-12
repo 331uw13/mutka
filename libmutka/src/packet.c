@@ -199,7 +199,7 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
 
 int mutka_recv_incoming_packet(struct mutka_packet* packet, int socket_fd) {
 
-    if(!mutka_socket_rdready_inms(socket_fd, 200)) {
+    if(!mutka_socket_rdready_inms(socket_fd, 0)) {
         return 0;
     }
 

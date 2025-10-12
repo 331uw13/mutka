@@ -89,6 +89,7 @@ out:
 }
 
 
+
 void mutka_close_server(struct mutka_server* server) {
     if(!server) {
         return;
@@ -101,16 +102,11 @@ void mutka_close_server(struct mutka_server* server) {
     pthread_join(global.recv_thread, NULL);
 
     for(uint32_t i = 0; i < server->num_clients; i++) {
-        struct mutka_client* client = &server->clients[i];
-        if(client->socket_fd >= 0) {
-            close(client->socket_fd);
-            client->socket_fd = -1;
-        }
+        mutka_free_client(&server->clients[i]);
     }
 
     mutka_free_rpacket(&server->out_raw_packet);
     mutka_free_rpacket(&server->inpacket.raw_packet);
-
     mutka_free_packet(&server->inpacket);
 
     close(server->socket_fd);
@@ -141,6 +137,10 @@ void* mutka_server_acceptor_thread_func(void* arg) {
             continue;
         }
 
+        mutka_str_alloc(&client.metadata_keys.public_key);
+        mutka_str_alloc(&client.metadata_keys.private_key);
+        mutka_str_alloc(&client.peer_metadata_publkey);
+
         pthread_mutex_lock(&server->mutex);
         
         struct mutka_client* new_client_ptr = &server->clients[server->num_clients];
@@ -152,8 +152,6 @@ void* mutka_server_acceptor_thread_func(void* arg) {
     }
     return NULL;
 }
-
-#include <stdio.h>
 
 void* mutka_server_recvdata_thread_func(void* arg) {
     struct mutka_server* server = (struct mutka_server*)arg;
@@ -176,9 +174,38 @@ void* mutka_server_recvdata_thread_func(void* arg) {
     return NULL;
 }
 
-void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client* client) {
 
-    // TODO: Do internal packet handling.
+#include <stdio.h>
+
+void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client* client) {
+    // NOTE: server->mutex is locked here.
+
+    switch(server->inpacket.id) {
+        case MPACKET_HELLO:
+            printf("(CLIENT INITIATED THE HANDSHAKE)\n");
+            printf("(RESPOND WITH GENERATED METADATA PUBLIC KEY)\n");
+
+            mutka_openssl_X25519_keypair(&client->metadata_keys);
+            mutka_rpacket_prep(&server->out_raw_packet, MPACKET_HANDSHAKE);
+
+            struct mutka_str pubkey_hexstr;
+            mutka_str_alloc(&pubkey_hexstr);
+
+            mutka_bytes_to_hexstr(&client->metadata_keys.public_key, &pubkey_hexstr);
+            mutka_rpacket_add_ent(&server->out_raw_packet, 
+                    "metadata_pubkey", pubkey_hexstr.bytes, pubkey_hexstr.size);
+            
+            mutka_send_rpacket(client->socket_fd, &server->out_raw_packet);
+            
+            mutka_str_free(&pubkey_hexstr);
+            return;
+
+        case MPACKET_HANDSHAKE:
+
+            return;
+
+    }
+
 
     server->config.packet_received_callback(server, client);
 }

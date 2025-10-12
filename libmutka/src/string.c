@@ -10,7 +10,7 @@
 
 
 // Allocates more memory for string if needed.
-static bool mutka_str_memcheck(struct mutka_str* str, size_t size_add) {
+static bool mutka_str_memcheck(struct mutka_str* str, uint32_t size_add) {
     if(!str->bytes) {
         str->bytes = malloc(STR_DEFMEMSIZE);
         str->memsize = STR_DEFMEMSIZE;
@@ -62,14 +62,15 @@ void mutka_str_nullterm(struct mutka_str* str) {
     if(str->bytes[str->size] == '\0') {
         return;
     }
+    
     if(!mutka_str_memcheck(str, 1)) {
         return; // TODO: handle memory errors.
     }
 
-    str->bytes[str->size+1] = '\0';
+    str->bytes[str->size] = '\0';
 }
 
-void mutka_str_move(struct mutka_str* str, char* data, size_t size) {
+void mutka_str_move(struct mutka_str* str, char* data, uint32_t size) {
     if(!mutka_str_memcheck(str, size)) {
         return; // TODO: handle memory errors.
     }
@@ -94,5 +95,39 @@ void mutka_str_clear(struct mutka_str* str) {
 
     memset(str->bytes, 0, str->size);
 }
+
+void mutka_str_reserve(struct mutka_str* str, uint32_t size) {
+    mutka_str_memcheck(str, size);
+}
+
+    
+static const char HEX[] = "0123456789ABCDEF";
+void mutka_bytes_to_hexstr(struct mutka_str* in, struct mutka_str* out) {
+    for(uint32_t i = 0; i < in->size; i++) {
+        mutka_str_pushbyte(out, HEX[ (abs(in->bytes[i]) >> 4) % 0xF ]);
+        mutka_str_pushbyte(out, HEX[ abs(in->bytes[i]) & 0xF ]);
+    }
+}
+
+#define HEXBUF_SIZE 4
+void mutka_hexstr_to_bytes(struct mutka_str* in, struct mutka_str* out) {
+    
+    char hexbuf[HEXBUF_SIZE] = { 0 };
+    uint32_t hexbuf_i = 0;
+    
+    mutka_str_clear(out);
+
+    for(uint32_t i = 0; i < in->size; i++) {
+        hexbuf[hexbuf_i++] = in->bytes[i];
+
+        if(hexbuf_i >= 2) {
+            mutka_str_pushbyte(out, strtol(hexbuf, NULL, 16));
+            memset(hexbuf, 0, hexbuf_i);
+            hexbuf_i = 0;
+        }
+    }
+}
+
+
 
 
