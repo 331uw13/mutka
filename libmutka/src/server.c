@@ -76,7 +76,7 @@ struct mutka_server* mutka_create_server(struct mutka_server_cfg config) {
     }
 
 
-    const int listen_queue_hint = 6;
+    int listen_queue_hint = 6;
     int listen_result = listen(server->socket_fd, listen_queue_hint);
 
     if(listen_result != 0) {
@@ -118,7 +118,7 @@ void mutka_close_server(struct mutka_server* server) {
     pthread_join(global.recv_thread, NULL);
 
     for(uint32_t i = 0; i < server->num_clients; i++) {
-        mutka_free_client(&server->clients[i]);
+        mutka_disconnect(&server->clients[i]);
     }
 
     mutka_free_rpacket(&server->out_raw_packet);
@@ -143,15 +143,35 @@ void mutka_server_remove_client(struct mutka_server* server, struct mutka_client
             break;
         }
     }
-    
+   
     if(remove_index >= 0) {
-        mutka_free_client(&server->clients[remove_index]);
+        mutka_disconnect(&server->clients[remove_index]);
+
+        // Shift remaining clients from right to left.
         for(uint32_t i = remove_index; i < server->num_clients-1; i++) {
             server->clients[i] = server->clients[i+1];
         }
     }
 
     unlock_server_mutex_ifneed(server);
+}
+
+static void mutka_server_handle_client_connect
+(struct mutka_server* server, struct mutka_client* client) {
+    client->env = MUTKA_ENV_SERVER;
+
+    client->metadata_keys = mutka_init_keypair();
+    //mutka_str_alloc(&client->metadata_keys.public_key);
+    //mutka_str_alloc(&client->metadata_keys.private_key);
+    mutka_str_alloc(&client->peer_metadata_publkey);
+
+    pthread_mutex_lock(&server->mutex);
+    
+    struct mutka_client* new_client_ptr = &server->clients[server->num_clients];
+    *new_client_ptr = *client;
+    server->num_clients++;
+   
+    server->config.client_connected_callback(server, new_client_ptr);
 }
 
 void* mutka_server_acceptor_thread_func(void* arg) {
@@ -162,6 +182,7 @@ void* mutka_server_acceptor_thread_func(void* arg) {
         if(server->num_clients+1 >= server->config.max_clients) {
             pthread_mutex_unlock(&server->mutex);
 
+            // Server is full.
             mutka_sleep_ms(500);
             continue;
         }
@@ -178,17 +199,7 @@ void* mutka_server_acceptor_thread_func(void* arg) {
             continue;
         }
 
-        mutka_str_alloc(&client.metadata_keys.public_key);
-        mutka_str_alloc(&client.metadata_keys.private_key);
-        mutka_str_alloc(&client.peer_metadata_publkey);
-
-        pthread_mutex_lock(&server->mutex);
-        
-        struct mutka_client* new_client_ptr = &server->clients[server->num_clients];
-        *new_client_ptr = client;
-        server->num_clients++;
-        server->config.client_connected_callback(server, new_client_ptr);
-
+        mutka_server_handle_client_connect(server, &client);
         pthread_mutex_unlock(&server->mutex);
     }
     return NULL;
@@ -228,8 +239,17 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
     // NOTE: server->mutex is locked here.
 
     switch(server->inpacket.id) {
-        case MPACKET_HELLO:
+        case MPACKET_HANDSHAKE:
+            if(server->inpacket.num_elements == 0) {
+                return;
+            }
 
+            // First save the received peer metadata public key.
+            struct mutka_packet_elem* key_elem = &server->inpacket.elements[0];
+            mutka_str_move(&client->peer_metadata_publkey, key_elem->data.bytes, key_elem->data.size);
+
+            // Generate X25519 keypair for the client which will be stored on the server.
+            // See packet.h for more information about metadata keys.
             mutka_openssl_X25519_keypair(&client->metadata_keys);
             mutka_rpacket_prep(&server->out_raw_packet, MPACKET_HANDSHAKE);
 
@@ -241,14 +261,9 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
                     "metadata_publkey", pubkey_hexstr.bytes, pubkey_hexstr.size);
             
             mutka_send_rpacket(client->socket_fd, &server->out_raw_packet);
-            
+
             mutka_str_free(&pubkey_hexstr);
             return;
-
-        case MPACKET_HANDSHAKE:
-
-            return;
-
     }
 
 

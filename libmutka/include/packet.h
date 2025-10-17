@@ -39,12 +39,10 @@ struct mutka_packet {
 
 enum mutka_packet_ids : int {
 
-    // When client connects to server,
-    // They will initiate a handshake.
-    // Here the server will also generate new packet metadata keypair
-    MPACKET_HELLO,
-
-    // Server will respond to MPACKET_HELLO with this packet
+    // When client connects to server, first they generate X25519 metadata keypair.
+    // And send the public key with this packet.
+    //
+    // The server will then respond to the client
     // containing the X25519 packet metadata public key for the specific client.
     // The metadata keys are used to encrypt packet metadata.
     // NOTE: packet metadata does _not_ contain any "secret" data

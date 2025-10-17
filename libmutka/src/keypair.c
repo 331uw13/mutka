@@ -4,6 +4,13 @@
 
 
 
+struct mutka_keypair mutka_init_keypair() {
+    struct mutka_keypair keypair;
+    mutka_str_alloc(&keypair.public_key);
+    mutka_str_alloc(&keypair.private_key);
+
+    return keypair;
+}
 
 void mutka_free_keypair(struct mutka_keypair* keypair) {
     mutka_str_clear(&keypair->private_key);

@@ -16,6 +16,7 @@ struct mutka_keypair {
 void mutka_free_keypair(struct mutka_keypair* keypair);
 void mutka_null_keypair(struct mutka_keypair* keypair);
 
+struct mutka_keypair mutka_init_keypair();
 
 
 

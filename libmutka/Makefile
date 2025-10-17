@@ -1,4 +1,4 @@
-FLAGS = -fPIC -O2 -Wall -Wextra 
+FLAGS = -fPIC -ggdb -Wall -Wextra 
 CC = gcc
 
 TARGET_NAME = libmutka.so

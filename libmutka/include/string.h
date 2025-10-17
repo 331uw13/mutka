@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 
+// TODO: Some operations need a return value.
 
 struct mutka_str {
     char* bytes;
@@ -31,6 +32,8 @@ void mutka_str_clear(struct mutka_str* str);
 // Makes sure str can hold 'size' number of bytes.
 void mutka_str_reserve(struct mutka_str* str, uint32_t size);
 
+char mutka_str_lastbyte(struct mutka_str* str);
+bool mutka_str_append(struct mutka_str* str, char* data, uint32_t size);
 
 void mutka_bytes_to_hexstr(struct mutka_str* in, struct mutka_str* out);
 void mutka_hexstr_to_bytes(struct mutka_str* in, struct mutka_str* out);

@@ -11,7 +11,12 @@
 
 static char errmsg[MUTKA_ERRMSG_MAX_SIZE+1] = { 0 };
 static size_t errmsg_size = 0;
+static void (*errmsg_callback)(char*, size_t) = NULL;
 
+
+void mutka_set_errmsg_callback(void(*callback)(char*, size_t)) {
+    errmsg_callback = callback; 
+}
 
 void mutka_set_errmsg(const char* msg_fmt, ...) {
     if(errmsg_size > 0) {
@@ -22,7 +27,7 @@ void mutka_set_errmsg(const char* msg_fmt, ...) {
     va_list args;
     va_start(args);
 
-    char buffer[MUTKA_ERRMSG_MAX_SIZE] = { 0 };
+    char buffer[MUTKA_ERRMSG_MAX_SIZE+1] = { 0 };
     vsnprintf(
             buffer,
             MUTKA_ERRMSG_MAX_SIZE,
@@ -33,7 +38,11 @@ void mutka_set_errmsg(const char* msg_fmt, ...) {
 
     size_t buf_len = strlen(buffer);
     buf_len = (buf_len < MUTKA_ERRMSG_MAX_SIZE) ? buf_len : MUTKA_ERRMSG_MAX_SIZE;
-    
+   
+    if(errmsg_callback) {
+        errmsg_callback(buffer, buf_len);
+    } 
+
     memmove(errmsg, buffer, buf_len);
     errmsg_size = buf_len;
 }

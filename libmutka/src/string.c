@@ -41,7 +41,7 @@ static bool mutka_str_memcheck(struct mutka_str* str, uint32_t size_add) {
 
 void mutka_str_alloc(struct mutka_str* str) {
     str->memsize = STR_DEFMEMSIZE;
-    str->bytes = malloc(str->memsize);
+    str->bytes = calloc(1, str->memsize);
     str->size = 0;
     // TODO: handle memory errors.
 }
@@ -75,6 +75,7 @@ void mutka_str_move(struct mutka_str* str, char* data, uint32_t size) {
         return; // TODO: handle memory errors.
     }
 
+    mutka_str_clear(str);
     memmove(str->bytes, data, size);
     str->size = size;
 }
@@ -93,7 +94,8 @@ void mutka_str_clear(struct mutka_str* str) {
         return;
     }
 
-    memset(str->bytes, 0, str->size);
+    memset(str->bytes, 0, (str->size < str->memsize) ? str->size : str->memsize);
+    str->size = 0;
 }
 
 void mutka_str_reserve(struct mutka_str* str, uint32_t size) {
@@ -128,6 +130,28 @@ void mutka_hexstr_to_bytes(struct mutka_str* in, struct mutka_str* out) {
     }
 }
 
+char mutka_str_lastbyte(struct mutka_str* str) {
+    if(!str) {
+        return 0;
+    }
+    if(!str->bytes) {
+        return 0;
+    }
+    if(str->size >= str->memsize) {
+        return 0;
+    }
+    return str->bytes[str->size];
+}
 
+bool mutka_str_append(struct mutka_str* str, char* data, uint32_t size) {
+    if(!mutka_str_memcheck(str, size)) {
+        return false;
+    }
+
+    memmove(str->bytes + str->size, data, size);
+    str->size += size;
+    
+    return true;
+}
 
 

@@ -33,7 +33,6 @@ int main() {
         .max_clients = 8,
         .flags = (MUTKA_S_FLG_REUSEADDR),
 
-        // Callbacks
         .client_connected_callback    = client_connected,
         .client_disconnected_callback = client_disconnected,
         .packet_received_callback     = packet_received
@@ -43,6 +42,7 @@ int main() {
     if(!server) {
         fprintf(stderr, "ERROR: %s\n", mutka_get_errmsg());
     }
+
 
 
     printf("press enter to shutdown the server.\n");
