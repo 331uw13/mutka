@@ -106,27 +106,125 @@ bool mutka_openssl_ED25519_keypair(struct mutka_keypair* keypair) {
 }
 
 
+bool mutka_openssl_scrypt(
+        struct mutka_str* derived_key,
+        uint32_t output_size,
+        char* input, size_t input_size,
+        char* salt,  size_t salt_size) {
+
+    if(!input || !input_size) {
+        return false;
+    }
+    if(!salt || !salt_size) {
+        return false;
+    }
+
+    mutka_str_reserve(derived_key, output_size);
+
+    const uint64_t N = 524288; // 2 ^ 19
+    const uint64_t R = 8;
+    const uint64_t P = 2;
+    const uint64_t max_mem = 1024 * 1024 * (512 + 64); // ~600 MB
+
+    int res = EVP_PBE_scrypt(
+            input, input_size,
+            (uint8_t*)salt, salt_size, N, R, P, max_mem, 
+            (uint8_t*)derived_key->bytes, output_size);
+
+    if(res > 0) {
+        derived_key->size = output_size;
+    }
+
+    return (res > 0);
+}
 
 bool mutka_openssl_AES256CBC_encrypt(struct mutka_str* cipher_out, 
         char* key, char* iv, char* data, size_t data_size) {
 
+    bool result = false;
 
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    if(!ctx) {
+        openssl_error();
+        goto out;
+    }
 
+    if(EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, (uint8_t*)key, (uint8_t*)iv) <= 0) {
+        openssl_error();
+        goto out;
+    }
+
+    mutka_str_clear(cipher_out);
+    mutka_str_reserve(cipher_out, data_size + EVP_CIPHER_block_size(EVP_aes_256_cbc()));
+
+    if(EVP_EncryptUpdate(ctx, 
+                (uint8_t*)cipher_out->bytes, 
+                (int*)&cipher_out->size, 
+                (uint8_t*)data, data_size) <= 0) {
+        openssl_error();
+        goto out;
+    }
+
+    int final_size = 0;
+    if(EVP_EncryptFinal_ex(ctx, 
+                (uint8_t*)(cipher_out->bytes + cipher_out->size),
+                &final_size) <= 0) {
+        openssl_error();
+        goto out;
+    }
+
+    cipher_out->size += final_size;
+    result = true;
+
+out:
+    EVP_CIPHER_CTX_free(ctx);
+
+    return result;
 }
 
 bool mutka_openssl_AES256CBC_decrypt(struct mutka_str* data_out,
         char* key, char* iv, char* cipher, size_t cipher_size) {
 
+    bool result = false;
+
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    if(!ctx) {
+        openssl_error();
+        goto out;
+    }
+
+    if(EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, (uint8_t*)key, (uint8_t*)iv) <= 0) {
+        openssl_error();
+        goto out;
+    }
+
+    mutka_str_clear(data_out);
+    mutka_str_reserve(data_out, cipher_size);
+
+    if(EVP_DecryptUpdate(ctx, 
+                (uint8_t*)data_out->bytes, 
+                (int*)&data_out->size, 
+                (uint8_t*)cipher, cipher_size) <= 0) {
+        openssl_error();
+        goto out;
+    }
+
+    int final_size = 0;
+    if(EVP_DecryptFinal_ex(ctx, 
+                (uint8_t*)(data_out->bytes + data_out->size),
+                &final_size) <= 0) {
+        openssl_error();
+        goto out;
+    }
+
+    data_out->size += final_size;
+    result = true;
+
+out:
+    EVP_CIPHER_CTX_free(ctx);
+
+    return result;
 }
-
-
-
-
-
-
-
-
-
 
 
 

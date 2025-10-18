@@ -12,6 +12,11 @@
 bool mutka_openssl_X25519_keypair(struct mutka_keypair* keypair);
 bool mutka_openssl_ED25519_keypair(struct mutka_keypair* keypair);
 
+bool mutka_openssl_scrypt(
+        struct mutka_str* derived_key, uint32_t output_size,
+        char* input, size_t input_size,
+        char* salt,  size_t salt_size);
+
 bool mutka_openssl_AES256CBC_encrypt(struct mutka_str* cipher_out, 
         char* key, char* iv, char* data, size_t data_size);
 

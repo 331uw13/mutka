@@ -3,6 +3,8 @@
 #include <arpa/inet.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <pwd.h>
 
 #include "../include/client.h"
 #include "../include/mutka.h"
@@ -23,126 +25,223 @@ void mutka_client_handle_packet(struct mutka_client* client);
 
 #include <stdio.h>
 
-
-static bool get_mutka_user_dir(struct mutka_client_cfg* config, struct mutka_str* path) {
-    // TODO: handle null pointers.
-
-    size_t cfgdir_len = strlen(config->mutka_cfgdir);
-    size_t nickname_len = strlen(config->nickname);
-
-    if(!nickname_len) {
-        mutka_set_errmsg("Config doesnt contain nickname");
-        return false;
-    }
-
-    if(cfgdir_len > 0) {
-        mutka_str_move(path, config->mutka_cfgdir, cfgdir_len);
-
-        if(mutka_str_lastbyte(path) != '/') {
-            mutka_str_pushbyte(path, '/');
-        }
-    }
-        
-    if(!mutka_str_append(path, config->nickname, nickname_len)) {
-        mutka_set_errmsg("Failed to append nickname to path.");
-        return false;
-    }
-
-    if(mutka_str_lastbyte(path) != '/') {
-        mutka_str_pushbyte(path, '/');
-    }
-
-    return true;
-}
-
-
-#define MUTKA_TRUSTED_KEY_SUFFIX ".public_key"
+#define MUTKA_TRUSTED_PUBLKEY_SUFFIX ".public_key"
+#define MUTKA_TRUSTED_PRIVKEY_SUFFIX ".private_key"
 #define MUTKA_TRUSTED_PEERS_DIRNAME "trusted_peers"
+#define MUTKA_DEF_CFGDIR_NAME ".mutka/" // So the default config directory would be /home/user/.mutka/
 
-bool get_mutka_user_trustedkey_path(struct mutka_str* path, struct mutka_client_cfg* config) {
 
-    if(!get_mutka_user_dir(config, path)) {
+bool mutka_validate_client_cfg(struct mutka_client_cfg* config) {
+    bool result = false;
+
+    size_t nickname_length = strlen(config->nickname);
+    if(nickname_length == 0) {
+        mutka_set_errmsg("Nickname is required.");
         return false;
     }
 
-    if(!mutka_str_append(path, 
-                config->nickname,
-                strlen(config->nickname))) {
-        return false;
-    }
+    // TODO: Move the operations to their own functions for readability.
 
-    if(!mutka_str_append(path, 
-                MUTKA_TRUSTED_KEY_SUFFIX, 
-                strlen(MUTKA_TRUSTED_KEY_SUFFIX))) {
-        return false;
-    }
-
-    return true;
-}
-
-bool get_mutka_trustedpeers_path(struct mutka_str* path, struct mutka_client_cfg* config) {
-
-    if(!get_mutka_user_dir(config, path)) {
-        return false;
-    }
-
-    if(!mutka_str_append(path, 
-                MUTKA_TRUSTED_PEERS_DIRNAME,
-                strlen(MUTKA_TRUSTED_PEERS_DIRNAME))) {
-        return false;
-    }
-
-    return true;
-}
-
-bool mutka_cfg_trustedkey_exists(struct mutka_client_cfg* config) {
-    
-    struct mutka_str path;
-    mutka_str_alloc(&path);
-
-    if(!get_mutka_user_trustedkey_path(&path, config)) {
-        mutka_str_free(&path);
-        return false;
-    }
-
-    bool exists = (access(path.bytes, F_OK) == 0);
-
-    mutka_str_free(&path);
-    return exists;
-}
-
-bool mutka_cfg_generate_trustedkey(struct mutka_client_cfg* config) {
+    // Config directory is copied to 'struct mutka_str' 
+    // for making changes to it easier.
+    // trusted_peers_dir, trusted_privkey_path and trusted_publkey_path
+    // are constructed from the mutka_cfgdir.
 
     /*
-        Build path to the user's trusted keys directory.
-        
         Example how the directory looks like:
         /home/user/.mutka/
-        |- username123/
+        '- username123/
            |- username123.public_key
            |- username123.private_key (encrypted)
-           |- trusted_peers/
+           '- trusted_peers/
               |- friend_A.public_key
-              |- friend_B.public_key
+              '- friend_B.public_key
     */
+
+    struct mutka_str tmpdir;
+    mutka_str_alloc(&tmpdir);
+
+
+    if(config->use_default_cfgdir) {
+
+        struct passwd* pw = getpwuid(getuid());
+        if(!pw) {
+            mutka_set_errmsg("Failed to get user passwd "
+                    "file entry (for home directory) | %s", strerror(errno));
+            goto out;
+        }
+
+        size_t pwdir_len = strlen(pw->pw_dir);
+        if(pwdir_len == 0) {
+            mutka_set_errmsg("User doesnt have home directory? "
+                    "(struct passwd* pw, pw->pw_dir length is zero)");
+            goto out;
+        }
+
+        mutka_str_move(&tmpdir, pw->pw_dir, pwdir_len);
+        
+    }
+    else {
+        // User has chosen a config directory.
+        
+        size_t user_cfgdir_len = strlen(config->mutka_cfgdir);
+        if(user_cfgdir_len == 0) {
+            mutka_set_errmsg("When config.use_default_cfgdir is set to 'false', "
+                    "config.mutka_cfgdir cant be empty.");
+            goto out;
+        }
+
+        mutka_str_move(&tmpdir, config->mutka_cfgdir, user_cfgdir_len);
+    }
+
+    if(mutka_str_lastbyte(&tmpdir) != '/') {
+        mutka_str_pushbyte(&tmpdir, '/');
+    }
+
+    if(config->use_default_cfgdir) {
+        mutka_str_append(&tmpdir, MUTKA_DEF_CFGDIR_NAME, strlen(MUTKA_DEF_CFGDIR_NAME));
+    }
+
+    // Different nicknames can have different configurations.
+    mutka_str_append(&tmpdir, config->nickname, nickname_length);
+
+    if(mutka_str_lastbyte(&tmpdir) != '/') {
+        mutka_str_pushbyte(&tmpdir, '/');
+    }
+    
+
+    // Save validated config directory.
+
+    if(tmpdir.size >= sizeof(config->mutka_cfgdir)) {
+        mutka_set_errmsg("Config directory path is too long");
+        goto out;
+    }
+    memset(config->mutka_cfgdir, 0, sizeof(config->mutka_cfgdir));
+    memmove(config->mutka_cfgdir, tmpdir.bytes, tmpdir.size);
+
+    // This will be needed later.
+    const size_t cfgdir_length = strlen(config->mutka_cfgdir);
+
+
+    // Construct the trusted_peers_dir.
+    mutka_str_append(&tmpdir, 
+            MUTKA_TRUSTED_PEERS_DIRNAME,
+            strlen(MUTKA_TRUSTED_PEERS_DIRNAME));
+
+    if(tmpdir.size >= sizeof(config->trusted_peers_dir)) {
+        mutka_set_errmsg("Trusted peers directory path is too long");
+        goto out;
+    }
+
+    memmove(config->trusted_peers_dir, tmpdir.bytes, tmpdir.size);
+
+
+    // Construct trusted_privkey_path.
+
+    // Go back to config directory.
+    mutka_str_move(&tmpdir, config->mutka_cfgdir, cfgdir_length);
+    
+    mutka_str_append(&tmpdir, config->nickname, nickname_length);
+    mutka_str_append(&tmpdir, 
+            MUTKA_TRUSTED_PRIVKEY_SUFFIX,
+            strlen(MUTKA_TRUSTED_PRIVKEY_SUFFIX));
+
+    if(tmpdir.size >= sizeof(config->trusted_privkey_path)) {
+        mutka_set_errmsg("Trusted private key path is too long");
+        goto out;
+    }
+   
+    memmove(config->trusted_privkey_path, tmpdir.bytes, tmpdir.size);
+
+    // Construct trusted_publkey_path.
+
+    // Go back to config directory.
+    mutka_str_move(&tmpdir, config->mutka_cfgdir, cfgdir_length);
+    
+    mutka_str_append(&tmpdir, config->nickname, nickname_length);
+    mutka_str_append(&tmpdir, 
+            MUTKA_TRUSTED_PUBLKEY_SUFFIX,
+            strlen(MUTKA_TRUSTED_PUBLKEY_SUFFIX));
+
+    if(tmpdir.size >= sizeof(config->trusted_publkey_path)) {
+        mutka_set_errmsg("Trusted public key path is too long");
+        goto out;
+    }
+
+    memmove(config->trusted_publkey_path, tmpdir.bytes, tmpdir.size);
+
+    printf("%s\n", config->mutka_cfgdir);
+    printf("%s\n", config->trusted_peers_dir);
+    printf("%s\n", config->trusted_privkey_path);
+    printf("%s\n", config->trusted_publkey_path);
+
+    result = true;
+
+out:
+    mutka_str_free(&tmpdir);
+
+    return result;
+}
+
+bool mutka_cfg_trustedkeys_exists(struct mutka_client_cfg* config) {
+    bool publkey_exists = mutka_file_exists(config->trusted_publkey_path);
+    bool privkey_exists = mutka_file_exists(config->trusted_privkey_path);
+
+    return (publkey_exists && privkey_exists);
+}
+
+bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
+        char* privkey_passphase, size_t passphase_len) {
+
+    // 'trusted_peers_dir' should contain 'mutka_cfgdir' as parent directory.
+    if(!mutka_mkdir_p(config->trusted_peers_dir, S_IRWXU)) {
+        return false;
+    }
+
+    if(!mutka_file_exists(config->trusted_privkey_path)) {
+        if(creat(config->trusted_privkey_path, S_IRUSR | S_IWUSR) < 0) {
+            mutka_set_errmsg("Failed to create trusted"
+                    " private key file | %s", strerror(errno));
+            return false;
+        }
+    }
+
+    if(!mutka_file_exists(config->trusted_publkey_path)) {
+        if(creat(config->trusted_publkey_path, S_IRUSR | S_IWUSR) < 0) {
+            mutka_set_errmsg("Failed to create trusted"
+                    " public key file | %s", strerror(errno));
+            return false;
+        }
+    }
 
 
     struct mutka_keypair trusted_keys = mutka_init_keypair();
-
     if(!mutka_openssl_ED25519_keypair(&trusted_keys)) {
         return false;
     }
 
-    struct mutka_str trusted_publkey_hexstr;
-    mutka_str_alloc(&trusted_publkey_hexstr);
-    mutka_bytes_to_hexstr(&trusted_keys.public_key, &trusted_publkey_hexstr);
 
-    //printf("%s\n", trusted_publkey_hexstr.bytes);
+    // Use scrypt to derieve stronger and more suitable key for AES.
+    // It will be used to encrypt the ED25519 private key.
+
+    struct mutka_str derived_key;
+    mutka_str_alloc(&derived_key);
+
+    char scrypt_salt[16] = { 0 };
+
+    mutka_openssl_scrypt(
+            &derived_key, 
+            32, // Output size
+            privkey_passphase, passphase_len,
+            scrypt_salt, sizeof(scrypt_salt));
+
+    mutka_dump_strbytes(&derived_key, "derived_key");
+
+    // TODO continue here...
 
 
-
-
-    mutka_str_free(&trusted_publkey_hexstr);
+    mutka_str_clear(&derived_key);
+    mutka_str_free(&derived_key);
     mutka_free_keypair(&trusted_keys);
     return true;
 }

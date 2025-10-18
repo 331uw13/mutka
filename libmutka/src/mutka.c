@@ -69,3 +69,24 @@ void mutka_sleep_ms(int ms) {
     usleep(ms * 1000);
 }
 
+void mutka_dump_strbytes(struct mutka_str* str, const char* label) {
+    if(str->size == 0) {
+        printf("\033[31m[%s] is empty\033[0m\n", label);
+        return;
+    }
+
+    printf("\033[32m[%s]\033[90m: \033[0m", label);
+    for(size_t i = 0; i < str->size; i++) {
+        if((i % 2) == 0) {
+            printf("\033[34m");
+        }
+        else {
+            printf("\033[36m");
+        }
+        printf("%02X", (uint8_t)str->bytes[i]);
+    }
+    printf("\033[0m\n");
+}
+
+
+

@@ -44,12 +44,15 @@ int main(int argc, char** argv) {
         .host = "127.0.0.1",
         .port = 35580,
         .nickname = nickname,
-        .mutka_cfgdir = NULL, // TODO: Accept null. 
+       
+        .use_default_cfgdir = true,
     };
 
-
-   
-    if(!mutka_cfg_trustedkey_exists(&config)) {
+    if(!mutka_validate_client_cfg(&config)) {
+        return 1;
+    }
+ 
+    if(!mutka_cfg_trustedkeys_exists(&config)) {
         printf("\033[33mYour trusted-key was not found for nickname \"%s\"\n"
                 "Would you like to generate it? (yes/no): \033[0m",
                 nickname);
@@ -61,11 +64,20 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        if(mutka_cfg_generate_trustedkey(&config)) {
-            printf("Your trusted-key is generated.\n"
-                    "You should now add your peer trusted-key\n");
+        printf("Enter passphase for private key: ");
+        fflush(stdout);
+        char passphase[512] = { 0 };
+        size_t passphase_len = read(STDIN_FILENO, passphase, sizeof(passphase));
+
+        if(mutka_cfg_generate_trustedkeys(&config, passphase, passphase_len)) {
+            printf("Your trusted-keys are generated.\n"
+                    "You should now add your peer's\ntrusted-key public key"
+                    " into '%s'\n", config.trusted_peers_dir);
         }
-        
+
+        memset(passphase, 0, sizeof(passphase));
+
+
         return 0;
     }
 
