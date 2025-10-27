@@ -88,6 +88,7 @@ struct mutka_server* mutka_create_server(struct mutka_server_cfg config) {
     }
 
     server->inpacket.elements = NULL;
+    server->inpacket.num_elements = 0;
     mutka_alloc_rpacket(&server->out_raw_packet, MUTKA_RAW_PACKET_DEFMEMSIZE);
     mutka_alloc_rpacket(&server->inpacket.raw_packet, MUTKA_RAW_PACKET_DEFMEMSIZE);
 
@@ -238,31 +239,33 @@ void* mutka_server_recvdata_thread_func(void* arg) {
 void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client* client) {
     // NOTE: server->mutex is locked here.
 
+
     switch(server->inpacket.id) {
         case MPACKET_HANDSHAKE:
             if(server->inpacket.num_elements == 0) {
                 return;
             }
 
+
             // First save the received peer metadata public key.
             struct mutka_packet_elem* key_elem = &server->inpacket.elements[0];
             mutka_str_move(&client->peer_metadata_publkey, key_elem->data.bytes, key_elem->data.size);
+            
+            mutka_dump_strbytes(&client->peer_metadata_publkey, "peer metadata publkey");
 
             // Generate X25519 keypair for the client which will be stored on the server.
             // See packet.h for more information about metadata keys.
             mutka_openssl_X25519_keypair(&client->metadata_keys);
             mutka_rpacket_prep(&server->out_raw_packet, MPACKET_HANDSHAKE);
+            
+            mutka_dump_strbytes(&client->metadata_keys.public_key, "client metadata publkey");
 
-            struct mutka_str pubkey_hexstr;
-            mutka_str_alloc(&pubkey_hexstr);
-
-            mutka_bytes_to_hexstr(&client->metadata_keys.public_key, &pubkey_hexstr);
-            mutka_rpacket_add_ent(&server->out_raw_packet, 
-                    "metadata_publkey", pubkey_hexstr.bytes, pubkey_hexstr.size);
+            mutka_rpacket_add_ent(&server->out_raw_packet,
+                    "metadata_publkey", 
+                    client->metadata_keys.public_key.bytes,
+                    client->metadata_keys.public_key.size);
             
             mutka_send_rpacket(client->socket_fd, &server->out_raw_packet);
-
-            mutka_str_free(&pubkey_hexstr);
             return;
     }
 

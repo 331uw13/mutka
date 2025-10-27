@@ -7,6 +7,8 @@
 #include "server.h"
 #include "fileio.h"
 
+
+#define MUTKA_VERSION_STR "mutka_version:[development]"
 #define MUTKA_ERRMSG_MAX_SIZE 1023
 
 

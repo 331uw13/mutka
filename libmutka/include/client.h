@@ -30,6 +30,7 @@ struct mutka_client {
     
     void(*packet_received_callback)(struct mutka_client*);
     bool handshake_complete;
+    
 };
 
 
@@ -44,13 +45,13 @@ struct mutka_client_cfg {
     bool      use_default_cfgdir;
     char      mutka_cfgdir [MUTKA_PATH_MAX]; // Modified by 'mutka_validate_client_cfg()'
                                              // If 'use_default_cfgdir' is set to 'true'
-
-    // --- Set by 'mutka_validate_client_cfg()' ---
     
-    char      trusted_peers_dir [MUTKA_PATH_MAX];
-    char      trusted_privkey_path [MUTKA_PATH_MAX];
-    char      trusted_publkey_path [MUTKA_PATH_MAX];
-
+    char      trusted_peers_dir [MUTKA_PATH_MAX];      // From mutka_validate_client_cfg()
+    char      trusted_privkey_path [MUTKA_PATH_MAX];   // From mutka_validate_client_cfg()
+    char      trusted_publkey_path [MUTKA_PATH_MAX];   // From mutka_validate_client_cfg()
+    
+    char      trusted_privkey[ED25519_KEYLEN];
+    char      trusted_publkey[ED25519_KEYLEN];
 };
 
 
@@ -60,6 +61,12 @@ bool mutka_cfg_trustedkeys_exists(struct mutka_client_cfg* config);
 // Passphase is required for encrypting the trusted private key file.
 bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
         char* privkey_passphase, size_t passphase_len);
+
+bool mutka_decrypt_trusted_privkey
+(
+    struct mutka_client_cfg* config,
+    char* passphase, size_t passphase_len
+);
 
 struct mutka_client* mutka_connect(struct mutka_client_cfg* config);
 

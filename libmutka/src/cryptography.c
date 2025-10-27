@@ -4,6 +4,7 @@
 #include <openssl/core_names.h>
 #include <openssl/ec.h>
 #include <openssl/pem.h>
+#include <openssl/rand.h>
 
 #include "../include/cryptography.h"
 #include "../include/mutka.h"
@@ -138,6 +139,198 @@ bool mutka_openssl_scrypt(
     return (res > 0);
 }
 
+
+bool mutka_openssl_AES256GCM_encrypt
+(
+    struct mutka_str* cipher_out,
+    struct mutka_str* tag_out,
+    char* gcm_key,
+    char* gcm_iv,
+    char* gcm_aad, size_t gcm_aad_len,
+    char* input_raw, size_t input_raw_size
+){
+    bool result = false;
+ 
+    int out_len = 0;
+    int tmp_len = 0;
+    OSSL_PARAM params[2] = { OSSL_PARAM_END, OSSL_PARAM_END };
+    EVP_CIPHER_CTX* ctx = NULL;
+    EVP_CIPHER* cipher = NULL;
+
+    
+    struct mutka_str input;
+    mutka_str_alloc(&input);
+
+    uint8_t rnd_bytes[2] = { 0 };
+    RAND_bytes(rnd_bytes, sizeof(rnd_bytes));
+
+    mutka_str_reserve(&input, input_raw_size + rnd_bytes[0] + rnd_bytes[1]);
+    mutka_str_move(&input, input_raw, input_raw_size);
+
+    for(size_t i = 0; i < sizeof(rnd_bytes); i++) {
+        for(uint8_t j = 0; j < rnd_bytes[i]; j++) {
+            mutka_str_pushbyte(&input, 0);
+        }
+    }
+
+
+    size_t gcm_iv_len = AESGCM_IV_LEN;
+
+
+    ctx = EVP_CIPHER_CTX_new();
+    if(!ctx) {
+        openssl_error();
+        goto out;
+    }
+
+
+    cipher = EVP_CIPHER_fetch(NULL, "AES-256-GCM", NULL);
+    if(!cipher) {
+        openssl_error();
+        goto out;
+    }
+
+
+    params[0] = OSSL_PARAM_construct_size_t(OSSL_CIPHER_PARAM_AEAD_IVLEN, &gcm_iv_len);
+
+
+
+    if(!EVP_EncryptInit_ex2(ctx, cipher, (uint8_t*)gcm_key, (uint8_t*)gcm_iv, params)) {
+        openssl_error();
+        goto out;
+    }
+
+    if(!EVP_EncryptUpdate(ctx, NULL, &out_len, (uint8_t*)gcm_aad, gcm_aad_len)) {
+        openssl_error();
+        goto out;
+    }
+    
+   
+    mutka_str_clear(cipher_out);
+    mutka_str_reserve(cipher_out, input.size + EVP_CIPHER_block_size(EVP_aes_256_gcm()));
+
+    if(!EVP_EncryptUpdate(ctx, 
+                (uint8_t*)cipher_out->bytes, (int*)&cipher_out->size,
+                (uint8_t*)input.bytes, input.size)) {
+        openssl_error();
+        goto out;
+    }
+
+
+    if(!EVP_EncryptFinal_ex(ctx, (uint8_t*)cipher_out->bytes, &tmp_len)) {
+        openssl_error();
+        goto out;
+    }
+
+    mutka_str_reserve(tag_out, AESGCM_TAG_LEN);
+
+    params[0] = OSSL_PARAM_construct_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, tag_out->bytes, AESGCM_TAG_LEN);
+    if(!EVP_CIPHER_CTX_get_params(ctx, params)) {
+        openssl_error();
+        goto out;
+    }
+
+    tag_out->size = AESGCM_TAG_LEN;
+
+
+    result = true;
+
+out:
+    if(cipher) {
+        EVP_CIPHER_free(cipher);
+    }
+    if(ctx) {
+        EVP_CIPHER_CTX_free(ctx);
+    }
+
+    mutka_str_clear(&input);
+    mutka_str_free(&input);
+
+    return result;
+}
+
+
+bool mutka_openssl_AES256GCM_decrypt
+(
+    struct mutka_str* output,
+    char* gcm_key,
+    char* gcm_iv,
+    char* gcm_aad, size_t gcm_aad_len,
+    char* expected_tag, size_t expected_tag_len,
+    char* cipher_bytes, size_t cipher_bytes_size
+){
+    bool result = false;
+
+    int out_len = 0;
+
+    EVP_CIPHER* cipher = NULL;
+    EVP_CIPHER_CTX* ctx = NULL;
+    OSSL_PARAM params[2] = { OSSL_PARAM_END, OSSL_PARAM_END };
+
+    size_t gcm_iv_len = AESGCM_IV_LEN;
+
+
+    ctx = EVP_CIPHER_CTX_new();
+    if(!ctx) {
+        openssl_error();
+        goto out;
+    }
+
+
+    cipher = EVP_CIPHER_fetch(NULL, "AES-256-GCM", NULL);
+    if(!cipher) {
+        openssl_error();
+        goto out;
+    }
+
+
+    params[0] = OSSL_PARAM_construct_size_t(OSSL_CIPHER_PARAM_AEAD_IVLEN, &gcm_iv_len);
+
+
+    if(!EVP_DecryptInit_ex2(ctx, cipher, (uint8_t*)gcm_key, (uint8_t*)gcm_iv, params)) {
+        openssl_error();
+        goto out;
+    }
+
+    if(!EVP_DecryptUpdate(ctx, NULL, &out_len, (uint8_t*)gcm_aad, gcm_aad_len)) {
+        openssl_error();
+        goto out;
+    }
+
+    mutka_str_clear(output);
+    mutka_str_reserve(output, cipher_bytes_size + 32);
+
+
+    // Decrypt cipher bytes.
+    if(!EVP_DecryptUpdate(ctx, (uint8_t*)output->bytes, (int*)&output->size, (uint8_t*)cipher_bytes, cipher_bytes_size)) {
+        openssl_error();
+        goto out;
+    }
+
+
+    // Set expected tag value.
+    params[0] = OSSL_PARAM_construct_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, expected_tag, expected_tag_len);
+    
+    if(!EVP_CIPHER_CTX_set_params(ctx, params)) {
+        openssl_error();
+        goto out;
+    }
+
+    int rv = EVP_DecryptFinal_ex(ctx, (uint8_t*)output->bytes, &out_len);
+    result = (rv > 0);
+
+out:
+
+    if(cipher) {
+        EVP_CIPHER_free(cipher);
+    }
+    if(ctx) {
+        EVP_CIPHER_CTX_free(ctx);
+    }
+
+    return result;
+}
+/*
 bool mutka_openssl_AES256CBC_encrypt(struct mutka_str* cipher_out, 
         char* key, char* iv, char* data, size_t data_size) {
 
@@ -225,7 +418,7 @@ out:
 
     return result;
 }
-
+*/
 
 
 

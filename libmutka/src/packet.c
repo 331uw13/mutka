@@ -122,10 +122,13 @@ static bool mutka_packet_memcheck(struct mutka_packet* packet) {
     return true;
 }
 
+#include <stdio.h>
 void mutka_clear_packet(struct mutka_packet* packet) {
     if(!packet->elements) {
         return;
     }    
+
+    printf("%s: %i\n", __func__, packet->num_elements);
 
     for(uint32_t i = 0; i < packet->num_elements; i++) {
         struct mutka_packet_elem* elem = &packet->elements[i];
@@ -138,11 +141,28 @@ void mutka_clear_packet(struct mutka_packet* packet) {
 }
 
 
+
+//#define DEBUG
+
 bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* raw_packet) {
     if(raw_packet->size < sizeof(packet->id)) {
         mutka_set_errmsg("Packet doesnt have any useful data.");
         return false;
     }
+
+#ifdef DEBUG
+
+    printf("RECEIVED PACKET:\n");
+    for(uint32_t i = 0; i < raw_packet->size; i++) {
+        printf("%02X ", (uint8_t)raw_packet->data[i]);
+        if((i % 24) == 23) {
+            printf("\n");
+        }
+    }
+
+    printf("\n-------------------------------------------\n");
+
+#endif
 
     mutka_clear_packet(packet);
 
@@ -153,6 +173,8 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
         mutka_set_errmsg("Packet has invalid ID or it was not set.");
         return false;
     }
+    
+
 
     if(!mutka_packet_memcheck(packet)) {
         return false;

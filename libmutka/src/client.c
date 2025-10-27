@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <pwd.h>
+#include <openssl/rand.h>
 
 #include "../include/client.h"
 #include "../include/mutka.h"
@@ -192,17 +193,23 @@ bool mutka_cfg_trustedkeys_exists(struct mutka_client_cfg* config) {
 
 bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
         char* privkey_passphase, size_t passphase_len) {
+    bool result = false;
+
+    if(passphase_len < 8) {
+        mutka_set_errmsg("Trusted private key passphase should NOT be less than 8 characters long.");
+        goto out;
+    }
 
     // 'trusted_peers_dir' should contain 'mutka_cfgdir' as parent directory.
     if(!mutka_mkdir_p(config->trusted_peers_dir, S_IRWXU)) {
-        return false;
+        goto out;
     }
 
     if(!mutka_file_exists(config->trusted_privkey_path)) {
         if(creat(config->trusted_privkey_path, S_IRUSR | S_IWUSR) < 0) {
             mutka_set_errmsg("Failed to create trusted"
                     " private key file | %s", strerror(errno));
-            return false;
+            goto out;
         }
     }
 
@@ -210,14 +217,15 @@ bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
         if(creat(config->trusted_publkey_path, S_IRUSR | S_IWUSR) < 0) {
             mutka_set_errmsg("Failed to create trusted"
                     " public key file | %s", strerror(errno));
-            return false;
+            goto out;
         }
     }
 
 
     struct mutka_keypair trusted_keys = mutka_init_keypair();
     if(!mutka_openssl_ED25519_keypair(&trusted_keys)) {
-        return false;
+        mutka_free_keypair(&trusted_keys);
+        goto out;
     }
 
 
@@ -228,6 +236,7 @@ bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
     mutka_str_alloc(&derived_key);
 
     char scrypt_salt[16] = { 0 };
+    RAND_bytes((uint8_t*)scrypt_salt, sizeof(scrypt_salt));
 
     mutka_openssl_scrypt(
             &derived_key, 
@@ -235,15 +244,118 @@ bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
             privkey_passphase, passphase_len,
             scrypt_salt, sizeof(scrypt_salt));
 
-    mutka_dump_strbytes(&derived_key, "derived_key");
 
-    // TODO continue here...
+    struct mutka_str privkey_cipher;
+    mutka_str_alloc(&privkey_cipher);
 
+    char gcm_iv[AESGCM_IV_LEN] = { 0 };
+    RAND_bytes((uint8_t*)gcm_iv, sizeof(gcm_iv));
+
+    struct mutka_str gcm_tag;
+    mutka_str_alloc(&gcm_tag);
+
+    if(!mutka_openssl_AES256GCM_encrypt(
+            &privkey_cipher,
+            &gcm_tag,
+            derived_key.bytes,
+            gcm_iv,
+            MUTKA_VERSION_STR, strlen(MUTKA_VERSION_STR),
+            trusted_keys.private_key.bytes,
+            trusted_keys.private_key.size)) {
+        mutka_set_errmsg("Failed to encrypt trusted private key.");
+        goto free_and_out;
+    }
+
+
+
+    /*
+    // TODO: Update from CBC to GCM.
+    mutka_openssl_AES256CBC_encrypt(
+            &privkey_cipher, 
+            derived_key.bytes,
+            aes_iv,
+            trusted_keys.private_key.bytes,
+            trusted_keys.private_key.size
+            );
+    */
+    
+    mutka_dump_strbytes(&privkey_cipher, "privkey_cipher");
+
+
+    // Save information for decryption process: 
+    /*
+       [cipher_length]  (4 bytes)
+       [cipher]         (num_cipher_bytes)
+       [iv]             (AESGCM_IV_LEN)
+       [tag]            (AESGCM_TAG_LEN)
+       [aad]            (variable length until EOF)
+    */
+
+    mutka_file_clear(config->trusted_privkey_path);
+
+
+    if(!mutka_file_append(config->trusted_privkey_path, (char*)&privkey_cipher.size, sizeof(privkey_cipher.size))) {
+        mutka_set_errmsg("Failed to save trusted private key's cipher length.");
+        goto free_and_out;
+    }
+
+    if(!mutka_file_append(config->trusted_privkey_path, privkey_cipher.bytes, privkey_cipher.size)) {
+        mutka_set_errmsg("Failed to save trusted private key's cipher.");
+        goto free_and_out;
+    }
+
+    if(!mutka_file_append(config->trusted_privkey_path, gcm_iv, sizeof(gcm_iv))) {
+        mutka_set_errmsg("Failed to save trusted private key's AES GCM IV.");
+        goto free_and_out;
+    }
+
+    if(!mutka_file_append(config->trusted_privkey_path, gcm_tag.bytes, gcm_tag.size)) {
+        mutka_set_errmsg("Failed to save trusted private key's AES GCM TAG.");
+        goto free_and_out;
+    }
+
+    if(!mutka_file_append(config->trusted_privkey_path, MUTKA_VERSION_STR, strlen(MUTKA_VERSION_STR))) {
+        mutka_set_errmsg("Failed to save trusted private key's AES GCM AAD.");
+        goto free_and_out;
+    }
+
+
+
+    // Save trusted public key
+    
+    mutka_file_clear(config->trusted_publkey_path); 
+    if(!mutka_file_append(config->trusted_publkey_path,
+                trusted_keys.public_key.bytes, trusted_keys.public_key.size)) {
+        mutka_set_errmsg("Failed to save trusted public key.");
+        goto free_and_out;
+    }
+
+    result = true;
+
+free_and_out:
 
     mutka_str_clear(&derived_key);
     mutka_str_free(&derived_key);
+    mutka_str_free(&privkey_cipher);
     mutka_free_keypair(&trusted_keys);
-    return true;
+
+out:
+    return result;
+}
+
+
+bool mutka_decrypt_trusted_privkey
+(
+    struct mutka_client_cfg* config,
+    char* passphase, size_t passphase_len
+){
+    bool result = false;
+
+    printf("%s\n", config->trusted_privkey_path);
+    
+
+
+    return result;
 }
 
 
@@ -282,6 +394,9 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config) {
 
     client->env = MUTKA_ENV_CLIENT;
 
+    // Initialize client structure.
+    client->inpacket.elements = NULL;
+    client->inpacket.num_elements = 0;
     mutka_alloc_rpacket(&client->out_raw_packet, MUTKA_RAW_PACKET_DEFMEMSIZE);
     mutka_alloc_rpacket(&client->inpacket.raw_packet, MUTKA_RAW_PACKET_DEFMEMSIZE);
 
@@ -291,9 +406,11 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config) {
     mutka_str_alloc(&client->peer_metadata_publkey);
     mutka_openssl_X25519_keypair(&client->metadata_keys);
 
+    mutka_dump_strbytes(&client->metadata_keys.public_key, "my metadata publkey");
+
     // Create thread for receiving data.
     pthread_create(&global.recv_thread, NULL, mutka_client_recv_thread, client);
-    
+  
     // Initiate handshake by sending generated metadata public key.
     // see packet.h for more information about metadata keys.
     mutka_rpacket_prep(&client->out_raw_packet, MPACKET_HANDSHAKE);
@@ -356,7 +473,7 @@ void* mutka_client_recv_thread(void* arg) {
         }
         else
         if(rd == M_LOST_CONNECTION) {
-            printf("lost connection TODO: handle this\n");
+            printf("lost connection | TODO: handle this\n");
         }
 
         pthread_mutex_unlock(&client->mutex);
@@ -385,6 +502,8 @@ void mutka_client_handle_packet(struct mutka_client* client) {
                     &client->peer_metadata_publkey, 
                     client->inpacket.elements[0].data.bytes,
                     client->inpacket.elements[0].data.size);
+
+            mutka_dump_strbytes(&client->inpacket.elements[0].data, "peer metadata publkey");
 
             client->handshake_complete = true;
             return;
