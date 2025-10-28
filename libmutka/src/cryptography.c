@@ -147,7 +147,7 @@ bool mutka_openssl_AES256GCM_encrypt
     char* gcm_key,
     char* gcm_iv,
     char* gcm_aad, size_t gcm_aad_len,
-    char* input_raw, size_t input_raw_size
+    char* input, size_t input_size
 ){
     bool result = false;
  
@@ -158,6 +158,7 @@ bool mutka_openssl_AES256GCM_encrypt
     EVP_CIPHER* cipher = NULL;
 
     
+    /*
     struct mutka_str input;
     mutka_str_alloc(&input);
 
@@ -172,6 +173,7 @@ bool mutka_openssl_AES256GCM_encrypt
             mutka_str_pushbyte(&input, 0);
         }
     }
+    */
 
 
     size_t gcm_iv_len = AESGCM_IV_LEN;
@@ -207,11 +209,11 @@ bool mutka_openssl_AES256GCM_encrypt
     
    
     mutka_str_clear(cipher_out);
-    mutka_str_reserve(cipher_out, input.size + EVP_CIPHER_block_size(EVP_aes_256_gcm()));
+    mutka_str_reserve(cipher_out, input_size + EVP_CIPHER_block_size(EVP_aes_256_gcm()));
 
     if(!EVP_EncryptUpdate(ctx, 
                 (uint8_t*)cipher_out->bytes, (int*)&cipher_out->size,
-                (uint8_t*)input.bytes, input.size)) {
+                (uint8_t*)input, input_size)) {
         openssl_error();
         goto out;
     }
@@ -242,9 +244,6 @@ out:
     if(ctx) {
         EVP_CIPHER_CTX_free(ctx);
     }
-
-    mutka_str_clear(&input);
-    mutka_str_free(&input);
 
     return result;
 }

@@ -2,7 +2,7 @@
 #define LIBMUTKA_FILEIO_H
 
 #include <fcntl.h>
-
+#include <sys/mman.h>
 
 bool mutka_file_exists(const char* path);
 bool mutka_dir_exists(const char* path);
@@ -14,6 +14,10 @@ bool mutka_mkdir_p(const char* path, mode_t perm);
 
 bool mutka_file_clear(const char* path);
 bool mutka_file_append(const char* path, char* data, size_t size);
+
+// 'out' must be unmapped using 'munmap' after use.
+// If 'out' is NULL, only file size is written to *out_size.
+bool mutka_map_file(const char* path, char** out, size_t* out_size);
 
 
 #endif

@@ -21,7 +21,9 @@ void mutka_set_errmsg_callback(void(*callback)(char*, size_t));
 bool mutka_socket_rdready_inms(int socket_fd, int timeout_ms);
 
 void mutka_sleep_ms(int ms);
-void mutka_dump_strbytes(struct mutka_str* str, const char* label); // For debugging.
 
+
+void mutka_dump_strbytes(struct mutka_str* str, const char* label); // For debugging.
+void mutka_dump_bytes(char* bytes, size_t size, const char* label); // For debugging.
 
 #endif

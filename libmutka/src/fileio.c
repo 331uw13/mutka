@@ -2,6 +2,9 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
 
 #include "../include/mutka.h"
 #include "../include/fileio.h"
@@ -89,5 +92,49 @@ bool mutka_file_append(const char* path, char* data, size_t size) {
 out:
     return result;
 }
+
+bool mutka_map_file(const char* path, char** out, size_t* out_size) {
+    bool result = false;
+
+    int fd = open(path, O_RDONLY);
+    struct stat sb;
+
+
+    if(fd < 0) {
+        mutka_set_errmsg("%s: open() | %s", __func__, strerror(errno));
+        goto out;
+    }
+
+    if(fstat(fd, &sb) < 0) {
+        mutka_set_errmsg("%s: fstat() | %s", __func__, strerror(errno));
+        goto out;
+    }
+
+    if(sb.st_size == 0) {
+        mutka_set_errmsg("%s: Empty file", __func__);
+        goto out;
+    }
+
+    *out_size = sb.st_size;
+
+    if(out) {
+        *out = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        if(!*out) {
+            mutka_set_errmsg("%s: mmap() | %s", __func__, strerror(errno));
+            goto out;
+        }
+    }
+
+    result = true;
+
+out:
+
+    if(fd > 0) {
+        close(fd);
+    }
+
+    return result;
+}
+
 
 

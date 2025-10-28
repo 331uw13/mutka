@@ -9,6 +9,7 @@
 #define ED25519_KEYLEN 32
 #define AESGCM_TAG_LEN 16
 #define AESGCM_IV_LEN 12
+#define SCRYPT_SALT_LEN 16
 
 bool mutka_openssl_X25519_keypair(struct mutka_keypair* keypair);
 bool mutka_openssl_ED25519_keypair(struct mutka_keypair* keypair);
@@ -17,6 +18,7 @@ bool mutka_openssl_scrypt(
         struct mutka_str* derived_key, uint32_t output_size,
         char* input, size_t input_size,
         char* salt,  size_t salt_size);
+
 
 bool mutka_openssl_AES256GCM_encrypt
 (

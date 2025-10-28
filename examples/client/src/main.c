@@ -174,6 +174,10 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    if(!mutka_read_trusted_publkey(&config)) {
+        return 1;
+    }
+
 
     // Finally should be able to connect.
 

@@ -41,6 +41,8 @@ bool mutka_validate_client_cfg(struct mutka_client_cfg* config) {
         return false;
     }
 
+    config->flags = 0;
+
     // TODO: Move the operations to their own functions for readability.
 
     // Config directory is copied to 'struct mutka_str' 
@@ -154,11 +156,12 @@ bool mutka_validate_client_cfg(struct mutka_client_cfg* config) {
    
     memmove(config->trusted_privkey_path, tmpdir.bytes, tmpdir.size);
 
-    // Construct trusted_publkey_path.
+
 
     // Go back to config directory.
     mutka_str_move(&tmpdir, config->mutka_cfgdir, cfgdir_length);
     
+    // Construct trusted_publkey_path.
     mutka_str_append(&tmpdir, config->nickname, nickname_length);
     mutka_str_append(&tmpdir, 
             MUTKA_TRUSTED_PUBLKEY_SUFFIX,
@@ -170,6 +173,7 @@ bool mutka_validate_client_cfg(struct mutka_client_cfg* config) {
     }
 
     memmove(config->trusted_publkey_path, tmpdir.bytes, tmpdir.size);
+
 
     printf("%s\n", config->mutka_cfgdir);
     printf("%s\n", config->trusted_peers_dir);
@@ -235,7 +239,7 @@ bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
     struct mutka_str derived_key;
     mutka_str_alloc(&derived_key);
 
-    char scrypt_salt[16] = { 0 };
+    char scrypt_salt[SCRYPT_SALT_LEN] = { 0 };
     RAND_bytes((uint8_t*)scrypt_salt, sizeof(scrypt_salt));
 
     mutka_openssl_scrypt(
@@ -266,26 +270,19 @@ bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
         goto free_and_out;
     }
 
-
-
     /*
-    // TODO: Update from CBC to GCM.
-    mutka_openssl_AES256CBC_encrypt(
-            &privkey_cipher, 
-            derived_key.bytes,
-            aes_iv,
-            trusted_keys.private_key.bytes,
-            trusted_keys.private_key.size
-            );
-    */
-    
     mutka_dump_strbytes(&privkey_cipher, "privkey_cipher");
-
-
+    mutka_dump_bytes(scrypt_salt, sizeof(scrypt_salt), "scrypt_salt"); 
+    mutka_dump_bytes(gcm_iv, sizeof(gcm_iv), "gcm_iv");
+    mutka_dump_strbytes(&gcm_tag, "gcm_tag");
+    mutka_dump_strbytes(&derived_key, "derived_key");
+    mutka_dump_bytes(privkey_passphase, passphase_len, "passphase");
+    */
     // Save information for decryption process: 
     /*
+       [scrypt_salt]    (SCRYPT_SALT_LEN)
        [cipher_length]  (4 bytes)
-       [cipher]         (num_cipher_bytes)
+       [cipher]         (cipher_length)
        [iv]             (AESGCM_IV_LEN)
        [tag]            (AESGCM_TAG_LEN)
        [aad]            (variable length until EOF)
@@ -293,6 +290,12 @@ bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
 
     mutka_file_clear(config->trusted_privkey_path);
 
+
+    
+    if(!mutka_file_append(config->trusted_privkey_path, scrypt_salt, sizeof(scrypt_salt))) {
+        mutka_set_errmsg("Failed to save trusted private key's scrypt salt.");
+        goto free_and_out;
+    }
 
     if(!mutka_file_append(config->trusted_privkey_path, (char*)&privkey_cipher.size, sizeof(privkey_cipher.size))) {
         mutka_set_errmsg("Failed to save trusted private key's cipher length.");
@@ -343,6 +346,33 @@ out:
     return result;
 }
 
+bool mutka_read_trusted_publkey(struct mutka_client_cfg* config) {
+    bool result = false;
+
+    char* publkey_file = NULL;
+    size_t publkey_file_size = 0;
+
+    if(!mutka_map_file(config->trusted_publkey_path, &publkey_file, &publkey_file_size)) {
+        goto out;
+    }
+
+    if(publkey_file_size != sizeof(config->trusted_publkey)) {
+        mutka_set_errmsg("Unexpected trusted public key size: %li", publkey_file_size);
+        goto free_and_out;
+    }
+
+    memmove(config->trusted_publkey, publkey_file, sizeof(config->trusted_publkey));
+    config->flags |= MUTKA_CCFG_HAS_TRUSTED_PUBLKEY;
+
+free_and_out:
+
+    munmap(publkey_file, publkey_file_size);
+    result = true;
+
+out:
+
+    return result;
+}
 
 bool mutka_decrypt_trusted_privkey
 (
@@ -351,17 +381,163 @@ bool mutka_decrypt_trusted_privkey
 ){
     bool result = false;
 
-    printf("%s\n", config->trusted_privkey_path);
+    char* privkey_file = NULL;
+    size_t privkey_file_size = 0;
+
+    if(!mutka_map_file(config->trusted_privkey_path, &privkey_file, &privkey_file_size)) {
+        goto out;
+    }
+
+    /*
+       Trusted private key file structure:
+
+       [scrypt_salt]    (SCRYPT_SALT_LEN)
+       [cipher_length]  (4 bytes)
+       [cipher]         (cipher_length)
+       [iv]             (AESGCM_IV_LEN)
+       [tag]            (AESGCM_TAG_LEN)
+       [aad]            (variable length until EOF)
+    */
+
+
+    struct mutka_str private_key;
+    struct mutka_str key_cipher;
+    struct mutka_str gcm_aad;
+    struct mutka_str derived_key;
+    mutka_str_alloc(&derived_key);
+    mutka_str_alloc(&key_cipher);
+    mutka_str_alloc(&gcm_aad);
+    mutka_str_alloc(&private_key);
+
+    char gcm_iv[AESGCM_IV_LEN] = { 0 };
+    char gcm_tag[AESGCM_TAG_LEN] = { 0 };
+    char scrypt_salt[SCRYPT_SALT_LEN] = { 0 };
+
+    size_t byte_offset = 0;
+
+
+    
+    // Read scrypt salt.
+    memmove(scrypt_salt, &privkey_file[byte_offset], sizeof(scrypt_salt));
+    byte_offset += sizeof(scrypt_salt);
+    if(byte_offset >= privkey_file_size) {
+        mutka_set_errmsg("Unexpected EOF (reading scrypt salt).");
+        goto free_and_out;
+    }
+    
+    // Read cipher length.
+    int cipher_length = 0;
+    memmove(&cipher_length, &privkey_file[byte_offset], sizeof(cipher_length));
+    byte_offset += sizeof(cipher_length);
+    if(byte_offset >= privkey_file_size) {
+        mutka_set_errmsg("Unexpected EOF (reading key cipher length).");
+        goto free_and_out;
+    }
+
+    // Read key cipher.
+    mutka_str_reserve(&key_cipher, cipher_length);
+    mutka_str_move(&key_cipher, &privkey_file[byte_offset], cipher_length);
+    byte_offset += cipher_length;
+    if(byte_offset >= privkey_file_size) {
+        mutka_set_errmsg("Unexpected EOF (reading key cipher).");
+        goto free_and_out;
+    }
+
+    // Read GCM IV.
+    memmove(gcm_iv, &privkey_file[byte_offset], sizeof(gcm_iv));
+    byte_offset += sizeof(gcm_iv);
+    if(byte_offset >= privkey_file_size) {
+        mutka_set_errmsg("Unexpected EOF (reading GCM IV).");
+        goto free_and_out;
+    }
+
+    // Read GCM TAG.
+    memmove(gcm_tag, &privkey_file[byte_offset], sizeof(gcm_tag));
+    byte_offset += sizeof(gcm_tag);
+    if(byte_offset >= privkey_file_size) {
+        mutka_set_errmsg("Unexpected EOF (reading GCM TAG).");
+        goto free_and_out;
+    }
+
+    // Read GCM AAD.
+    const int64_t remaining = privkey_file_size - byte_offset;
+    if(remaining < 0) {
+        mutka_set_errmsg("Unexpected EOF (reading GCM AAD).");
+        goto free_and_out;
+    }
+    mutka_str_reserve(&gcm_aad, remaining);
+    mutka_str_move(&gcm_aad, &privkey_file[byte_offset], remaining);
+
+
+    // Get key for decrypting.
+    mutka_openssl_scrypt(
+            &derived_key, 
+            32, // Output key size
+            passphase, passphase_len,
+            scrypt_salt, sizeof(scrypt_salt));
     
 
+    // Now all information should be collected
+    // to decrypt the trusted private key.
+    /*
+    mutka_dump_strbytes(&key_cipher, "key_cipher");
+    mutka_dump_bytes(scrypt_salt, sizeof(scrypt_salt), "scrypt_salt"); 
+    mutka_dump_bytes(gcm_iv, sizeof(gcm_iv), "gcm_iv");
+    mutka_dump_bytes(gcm_tag, sizeof(gcm_tag), "gcm_tag");
+    mutka_dump_strbytes(&derived_key, "derived_key");
+    mutka_dump_bytes(passphase, passphase_len, "passphase");
+    */
+    if(!mutka_openssl_AES256GCM_decrypt(
+                &private_key,
+                derived_key.bytes,
+                gcm_iv,
+                gcm_aad.bytes, gcm_aad.size,
+                gcm_tag, AESGCM_TAG_LEN,
+                key_cipher.bytes, key_cipher.size)) {
+        mutka_set_errmsg("Failed to decrypt trusted private key.");
+        goto free_and_out;
+    }
+    
+    if(private_key.size != ED25519_KEYLEN) {
+        mutka_set_errmsg("Unexpected trusted private key size: %i", private_key.size);
+        goto free_and_out;
+    }
 
+    
+    memmove(config->trusted_privkey, private_key.bytes, sizeof(config->trusted_privkey));
+    config->flags |= MUTKA_CCFG_HAS_TRUSTED_PRIVKEY;
+    result = true;
+
+free_and_out:
+
+    mutka_str_clear(&private_key);
+    mutka_str_free(&private_key);
+    mutka_str_free(&derived_key);
+    mutka_str_free(&key_cipher);
+    mutka_str_free(&gcm_aad);
+    munmap(privkey_file, privkey_file_size);
+
+out:
     return result;
 }
 
 
 struct mutka_client* mutka_connect(struct mutka_client_cfg* config) {
-    struct mutka_client* client = malloc(sizeof *client);
+    struct mutka_client* client = NULL;
+
+    if(!(config->flags & MUTKA_CCFG_HAS_TRUSTED_PUBLKEY)) {
+        mutka_set_errmsg("Client configuration doesnt contain trusted PUBLIC key.");
+        goto out;
+    }
+
+    if(!(config->flags & MUTKA_CCFG_HAS_TRUSTED_PRIVKEY)) {
+        mutka_set_errmsg("Client configuration doesnt contain trusted PRIVATE key.");
+        goto out;
+    }
+
+    client = malloc(sizeof *client);
     client->env = MUTKA_ENV_NULL;
+
 
     client->socket_fd = -1;
     client->socket_fd = socket(AF_INET, SOCK_STREAM, 0);

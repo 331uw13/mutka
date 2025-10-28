@@ -37,6 +37,11 @@ struct mutka_client {
 
 #define MUTKA_PATH_MAX 256
 
+// mutka_client_cfg flags
+#define MUTKA_CCFG_HAS_TRUSTED_PUBLKEY (1 << 0)
+#define MUTKA_CCFG_HAS_TRUSTED_PRIVKEY (1 << 1)
+
+
 struct mutka_client_cfg {
     char*     host;
     uint16_t  port;
@@ -52,6 +57,8 @@ struct mutka_client_cfg {
     
     char      trusted_privkey[ED25519_KEYLEN];
     char      trusted_publkey[ED25519_KEYLEN];
+
+    int       flags;
 };
 
 
@@ -59,14 +66,20 @@ bool mutka_validate_client_cfg(struct mutka_client_cfg* config);
 bool mutka_cfg_trustedkeys_exists(struct mutka_client_cfg* config);
 
 // Passphase is required for encrypting the trusted private key file.
-bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
-        char* privkey_passphase, size_t passphase_len);
+bool mutka_cfg_generate_trustedkeys
+(
+    struct mutka_client_cfg* config,
+    char* privkey_passphase, size_t passphase_len
+);
 
 bool mutka_decrypt_trusted_privkey
 (
     struct mutka_client_cfg* config,
     char* passphase, size_t passphase_len
 );
+
+// Trusted public key is not encrypted.
+bool mutka_read_trusted_publkey(struct mutka_client_cfg* config);
 
 struct mutka_client* mutka_connect(struct mutka_client_cfg* config);
 
