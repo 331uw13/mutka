@@ -134,9 +134,6 @@ static bool mutka_server_get_host_keys(struct mutka_server* server, const char* 
             goto out;
         }
 
-        mutka_dump_strbytes(&server->host_ed25519.public_key, "GENERETED host public key");
-        mutka_dump_strbytes(&server->host_ed25519.private_key, "GENERATED host private key");
-   
         // Set only readable by user who created the files.
         chmod(publkey_path, S_IRUSR);
         chmod(privkey_path, S_IRUSR);
@@ -166,8 +163,6 @@ static bool mutka_server_get_host_keys(struct mutka_server* server, const char* 
 
     result = true;
 
-    mutka_dump_strbytes(&server->host_ed25519.public_key, "host public key");
-    mutka_dump_strbytes(&server->host_ed25519.private_key, "host private key");
 
 out:
 
