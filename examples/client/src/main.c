@@ -115,12 +115,19 @@ int main(int argc, char** argv) {
     struct mutka_client_cfg config = 
     (struct mutka_client_cfg)
     {
-        .host = "127.0.0.1",
-        .port = 35580,
-        .nickname = nickname,
-       
-        .use_default_cfgdir = true, // Use "/home/user/.mutka/"
+        .use_default_cfgdir = true // Use "/home/user/.mutka/"
     };
+
+
+    // Copy nickname for configuration.
+    size_t nickname_len = strlen(nickname);
+    if(nickname_len >= MUTKA_NICKNAME_MAX) {
+        fprintf(stderr, "Too long nickname. max length is %i\n", MUTKA_NICKNAME_MAX);
+        return 1;
+    }
+
+    memmove(config.nickname, nickname, nickname_len);
+
 
     if(!mutka_validate_client_cfg(&config)) {
         return 1;
@@ -181,7 +188,7 @@ int main(int argc, char** argv) {
 
     // Finally should be able to connect.
 
-    struct mutka_client* client = mutka_connect(&config);
+    struct mutka_client* client = mutka_connect(&config, "127.0.0.1", 35580);
     if(!client) {
         return 1;
     }
@@ -189,11 +196,13 @@ int main(int argc, char** argv) {
     client->packet_received_callback = packet_received;
 
 
-    printf("press enter to disconnect\n");
+    printf("press enter to disconnect.\n");
+
     char tmp = 0;
     read(1, &tmp, 1);
 
     mutka_disconnect(client);
+    printf("disconnected.\n");
     return 0;
 }
 

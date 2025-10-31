@@ -2,8 +2,15 @@
 #include <stdlib.h>
 #include <sys/socket.h>
 
+#include <stdio.h>
+
+
 #include "../include/packet.h"
 #include "../include/mutka.h"
+
+#define DEBUG
+
+
 
 
 void mutka_alloc_rpacket(struct mutka_raw_packet* packet, size_t size){
@@ -41,39 +48,104 @@ static bool mutka_packet_add_bytes(struct mutka_raw_packet* packet, const char* 
 }
 
 
-bool mutka_rpacket_add_ent(struct mutka_raw_packet* packet, const char* label,
-                          const char* data, size_t data_size) {
+bool mutka_rpacket_add_ent
+(
+    struct mutka_raw_packet* packet,
+    const char* label,
+    char* data,
+    size_t data_size,
+    uint8_t encoding_option
+){
+    struct mutka_str data_encoded;
+    data_encoded.bytes = NULL;
 
     if(packet->has_write_error) {
         return false;
     }
 
-    // Format: packet_id entry:data|entry:data|entry:data ...
+
+    if(encoding_option == RPACKET_ENCODE_BASE64) {
+        mutka_str_alloc(&data_encoded);
+        if(!mutka_openssl_BASE64_encode(&data_encoded, data, data_size)) {
+            packet->has_write_error = true;
+            goto out;
+        }
+    }
+
+
+    // Format: ... label:<encoding_option>data| ...
 
     if(!mutka_packet_add_bytes(packet, label, strlen(label))) { 
         packet->has_write_error = true;
-        return false;
+        goto out;
     }
     if(!mutka_packet_add_bytes(packet, ":", 1)) { 
         packet->has_write_error = true;
-        return false;
-    }
-    if(!mutka_packet_add_bytes(packet, data, data_size)) { 
-        packet->has_write_error = true;
-        return false;
-    }
-    if(!mutka_packet_add_bytes(packet, "|", 1)) { 
-        packet->has_write_error = true;
-        return false;
+        goto out;
     }
 
-    return true;
+    if(!mutka_packet_add_bytes(packet, (char*)&encoding_option, sizeof(encoding_option))) {
+        packet->has_write_error = true;
+        goto out;
+    }
+   
+    if(encoding_option != RPACKET_ENCODE_NONE) {
+        if(!mutka_packet_add_bytes(packet, data_encoded.bytes, data_encoded.size)) { 
+            packet->has_write_error = true;
+            goto out;
+        }
+    }
+    else {
+        if(!mutka_packet_add_bytes(packet, data, data_size)) { 
+            packet->has_write_error = true;
+            goto out;
+        }
+    }
+    
+    if(!mutka_packet_add_bytes(packet, "|", 1)) { 
+        packet->has_write_error = true;
+        goto out;
+    }
+
+out:
+    if(data_encoded.bytes) {
+        mutka_str_free(&data_encoded);
+    }
+
+    return !packet->has_write_error;
 }
+
+
 
 void mutka_send_rpacket(int socket_fd, struct mutka_raw_packet* packet) {
     if(packet->has_write_error) {
         return;
     }
+
+    if(packet->size + sizeof(packet->size) >= packet->memsize) {
+        mutka_set_errmsg("Packet is too large to be sent.");
+        return;
+    }
+
+    packet->size += sizeof(packet->size);
+
+    // Make room for expected packet size.
+    memmove(packet->data + sizeof(packet->size), packet->data, packet->size);
+        
+    // Add packet size.
+    memmove(packet->data, &packet->size, sizeof(packet->size));
+
+#ifdef DEBUG
+    printf("SENT PACKET:\n");
+    for(uint32_t i = 0; i < packet->size; i++) {
+        printf("%02X ", (uint8_t)packet->data[i]);
+        if((i % 24) == 23) {
+            printf("\n");
+        }
+    }
+    printf("\n-------------------------------------------\n");
+#endif
+
 
     send(socket_fd, packet->data, packet->size, 0);
 }
@@ -98,11 +170,20 @@ void mutka_free_packet(struct mutka_packet* packet) {
 
 #define MUTKA_PACKET_MADD_ELEMS 16
 
-static bool mutka_packet_memcheck(struct mutka_packet* packet) {
+// Allocate more space for packet 'elements' if needed.
+static bool mutka_packet_memcheck(struct mutka_packet* packet) { 
     if(!packet->elements) {
         packet->elements = malloc(MUTKA_PACKET_MADD_ELEMS * sizeof *packet->elements);
+        if(!packet->elements) {
+            // TODO: handle memory errors.
+            return false;
+        }
+
         packet->num_elems_allocated = MUTKA_PACKET_MADD_ELEMS;
-        // TODO: handle memory errors.
+        for(uint32_t i = 0; i < packet->num_elems_allocated; i++) {
+            packet->elements[i].label.bytes = NULL;
+            packet->elements[i].data.bytes = NULL;
+        }
         return true;
     }
 
@@ -110,25 +191,31 @@ static bool mutka_packet_memcheck(struct mutka_packet* packet) {
         return true;
     }
 
+    const uint32_t prev_num_elems = packet->num_elems_allocated;
+
     packet->num_elems_allocated += MUTKA_PACKET_MADD_ELEMS;
     struct mutka_packet_elem* new_ptr = realloc(packet->elements, packet->num_elems_allocated);
     if(!new_ptr) {
         // TODO: handle memory errors.
         return false;
     }
-
+    
     packet->elements = new_ptr;
+
+    for(uint32_t i = prev_num_elems; i < packet->num_elems_allocated; i++) {
+        packet->elements[i].label.bytes = NULL;
+        packet->elements[i].data.bytes = NULL;
+    }
 
     return true;
 }
 
-#include <stdio.h>
 void mutka_clear_packet(struct mutka_packet* packet) {
     if(!packet->elements) {
         return;
     }    
 
-    printf("%s: %i\n", __func__, packet->num_elements);
+    //printf("%s: %i\n", __func__, packet->num_elements);
 
     for(uint32_t i = 0; i < packet->num_elements; i++) {
         struct mutka_packet_elem* elem = &packet->elements[i];
@@ -136,13 +223,11 @@ void mutka_clear_packet(struct mutka_packet* packet) {
         mutka_str_clear(&elem->data);
     }
 
+    packet->expected_size = 0;
     packet->num_elements = 0;
     packet->id = -1;
 }
 
-
-
-//#define DEBUG
 
 bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* raw_packet) {
     if(raw_packet->size < sizeof(packet->id)) {
@@ -163,18 +248,26 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
     printf("\n-------------------------------------------\n");
 
 #endif
+    // Format: packet_size, packet_id, entry:data|entry:data|entry:data ...
+
 
     mutka_clear_packet(packet);
+  
+    size_t header_size = 0;
 
-    // Format: packet_id entry:data|entry:data|entry:data ...
+    memmove(&packet->expected_size, &raw_packet->data[header_size], sizeof(packet->expected_size));
+    header_size += sizeof(packet->expected_size);
     
-    memmove(&packet->id, raw_packet->data, sizeof(packet->id));
+    memmove(&packet->id, &raw_packet->data[header_size], sizeof(packet->id));
+    header_size += sizeof(packet->id);
+
     if(packet->id >= MUTKA_NUM_PACKETS) {
         mutka_set_errmsg("Packet has invalid ID or it was not set.");
         return false;
     }
     
 
+    printf("EXPECTED = %i, RECV = %i\n", packet->expected_size, raw_packet->size);
 
     if(!mutka_packet_memcheck(packet)) {
         return false;
@@ -182,11 +275,11 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
 
     struct mutka_packet_elem* curr_elem = &packet->elements[0];
 
-    char* ch = raw_packet->data + sizeof(packet->id);
+    char* ch = raw_packet->data + header_size;
     char* lastch = raw_packet->data + raw_packet->size;
 
     while(ch < lastch) {
-            
+        
         // Read element label:
         while(ch < lastch) {
             if(*ch == ':') { // Label and data separator.
@@ -197,6 +290,15 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
             mutka_str_pushbyte(&curr_elem->label, *ch);
             ch++;
         }
+        mutka_str_pushbyte(&curr_elem->label, 0);
+
+        if(ch >= lastch) {
+            return false;
+        }
+
+        // Read data encoding option.
+        curr_elem->encoding = (uint8_t)*ch;
+        ch++;
 
         // Read element data:
         while(ch < lastch) {
@@ -213,13 +315,16 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
             mutka_str_pushbyte(&curr_elem->data, *ch);
             ch++;
         }
+        if(curr_elem->encoding == RPACKET_ENCODE_NONE) {
+            mutka_str_pushbyte(&curr_elem->data, 0);
+        }
         
     }
 
+    printf("PACKET PARSED OK!\n");
     return true;
 }
 
-#include <stdio.h>
 
 int mutka_recv_incoming_packet(struct mutka_packet* packet, int socket_fd) {
     if(!mutka_socket_rdready_inms(socket_fd, 0)) {

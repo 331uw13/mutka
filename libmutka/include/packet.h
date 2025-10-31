@@ -9,6 +9,10 @@
 #define MUTKA_RAW_PACKET_DEFMEMSIZE (1024 * 8) 
 
 
+// 'encoding' options for mutka_rpacket_add_ent()
+#define RPACKET_ENCODE_NONE    0x01
+#define RPACKET_ENCODE_BASE64  0x02
+
 
 struct mutka_raw_packet {
     char*     data;
@@ -17,27 +21,30 @@ struct mutka_raw_packet {
     bool      has_write_error;
 };
 
-
-
 struct mutka_packet_elem {
     struct mutka_str label;
     struct mutka_str data;
+    uint8_t          encoding;
 };
 
-// Raw packet can be parsed into its elements when it is received.
-struct mutka_packet {
-    
+// Received raw_packet can be parsed into its elements when it is received.
+struct mutka_packet { 
+    uint32_t                  expected_size;
+
     int                       id;
     struct mutka_packet_elem* elements;
     uint32_t                  num_elements;
     uint32_t                  num_elems_allocated;
     
-    struct mutka_raw_packet   raw_packet;
-
+    struct mutka_raw_packet   raw_packet; // Received raw packet
 };
 
 
 enum mutka_packet_ids : int {
+
+    // If received packet expected_size doesnt match received size.
+    // This packet will be sent.
+    MPACKET_RESEND,
 
     // When client connects to server, first they generate X25519 metadata keypair.
     // And send the public key with this packet.
@@ -64,8 +71,14 @@ void mutka_free_packet(struct mutka_packet* packet);
 void mutka_rpacket_prep(struct mutka_raw_packet* packet, int packet_id);
 
 // NOTE: 'label' must be NULL terminated.
-bool mutka_rpacket_add_ent(struct mutka_raw_packet* packet, const char* label,
-                          const char* data, size_t data_size);
+bool mutka_rpacket_add_ent
+(
+    struct mutka_raw_packet* packet,
+    const char* label,
+    char* data,
+    size_t data_size,
+    uint8_t encoding_option
+);
 
 void mutka_send_rpacket(int socket_fd, struct mutka_raw_packet* packet);
 

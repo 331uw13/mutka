@@ -1,10 +1,12 @@
 # mutka
 
 
+> NOTE: I will add more details in the future...
+
+
+
+## About "trusted-keys"
 ```
-
-
-About "trusted-keys"
 
 trusted-keys are ED25519 long-term key pair used for authentication between clients
 so they know for sure they are talking to the right person.
@@ -16,10 +18,6 @@ Default is "/home/user/.mutka/<user chosen nickname>/"
 The private key is encrypted using AES-256-GCM
 and the key for it is passed through key derivation function.
 
-
-
-(I will write more techniacal details when more parts are done 
- ~ 331uw13)
 
 ```
 

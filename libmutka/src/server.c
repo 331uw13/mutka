@@ -157,8 +157,7 @@ void mutka_server_remove_client(struct mutka_server* server, struct mutka_client
     unlock_server_mutex_ifneed(server);
 }
 
-static void mutka_server_handle_client_connect
-(struct mutka_server* server, struct mutka_client* client) {
+static void mutka_server_handle_client_connect(struct mutka_server* server, struct mutka_client* client) {
     client->env = MUTKA_ENV_SERVER;
 
     client->metadata_keys = mutka_init_keypair();
@@ -196,6 +195,7 @@ void* mutka_server_acceptor_thread_func(void* arg) {
         client.socket_fd = accept(server->socket_fd, (struct sockaddr*)&client.socket_addr, &socket_len);
 
         if(client.socket_fd < 0) {
+            printf("Failed to accept client. %s\n", strerror(errno));
             // TODO
             continue;
         }
@@ -239,6 +239,7 @@ void* mutka_server_recvdata_thread_func(void* arg) {
 void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client* client) {
     // NOTE: server->mutex is locked here.
 
+    printf("Handling MPACKET_HANDSHAKE, elements: %i\n", server->inpacket.num_elements);
 
     switch(server->inpacket.id) {
         case MPACKET_HANDSHAKE:
@@ -251,19 +252,21 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
             struct mutka_packet_elem* key_elem = &server->inpacket.elements[0];
             mutka_str_move(&client->peer_metadata_publkey, key_elem->data.bytes, key_elem->data.size);
             
-            mutka_dump_strbytes(&client->peer_metadata_publkey, "peer metadata publkey");
 
             // Generate X25519 keypair for the client which will be stored on the server.
             // See packet.h for more information about metadata keys.
             mutka_openssl_X25519_keypair(&client->metadata_keys);
-            mutka_rpacket_prep(&server->out_raw_packet, MPACKET_HANDSHAKE);
             
-            mutka_dump_strbytes(&client->metadata_keys.public_key, "client metadata publkey");
+            mutka_dump_strbytes(&client->peer_metadata_publkey, "peer metadata publkey");
+            mutka_dump_strbytes(&client->metadata_keys.public_key, "client(server side) metadata publkey");
 
+
+            mutka_rpacket_prep(&server->out_raw_packet, MPACKET_HANDSHAKE);
             mutka_rpacket_add_ent(&server->out_raw_packet,
                     "metadata_publkey", 
                     client->metadata_keys.public_key.bytes,
-                    client->metadata_keys.public_key.size);
+                    client->metadata_keys.public_key.size,
+                    RPACKET_ENCODE_BASE64);
             
             mutka_send_rpacket(client->socket_fd, &server->out_raw_packet);
             return;

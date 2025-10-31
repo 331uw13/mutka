@@ -522,7 +522,7 @@ out:
 }
 
 
-struct mutka_client* mutka_connect(struct mutka_client_cfg* config) {
+struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, uint16_t port) {
     struct mutka_client* client = NULL;
 
     if(!(config->flags & MUTKA_CCFG_HAS_TRUSTED_PUBLKEY)) {
@@ -538,6 +538,7 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config) {
     client = malloc(sizeof *client);
     client->env = MUTKA_ENV_NULL;
 
+    pthread_mutex_init(&client->mutex, NULL);
 
     client->socket_fd = -1;
     client->socket_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -549,9 +550,9 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config) {
     }
 
     client->socket_addr.sin_family = AF_INET;
-    client->socket_addr.sin_port = htons(config->port);
+    client->socket_addr.sin_port = htons(port);
 
-    inet_pton(AF_INET, config->host, &client->socket_addr.sin_addr);
+    inet_pton(AF_INET, host, &client->socket_addr.sin_addr);
 
 
     int connect_result = connect(
@@ -561,7 +562,7 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config) {
 
     if(connect_result != 0) {
         mutka_set_errmsg("Connection failed to (%s:%i) | %s", 
-                config->host, config->port, strerror(errno));
+                host, port, strerror(errno));
         close(client->socket_fd);
         free(client);
         client = NULL;
@@ -593,8 +594,9 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config) {
     mutka_rpacket_add_ent(&client->out_raw_packet, 
             "metadata_publkey", 
             client->metadata_keys.public_key.bytes, 
-            client->metadata_keys.public_key.size);
-
+            client->metadata_keys.public_key.size,
+            RPACKET_ENCODE_BASE64);
+    
     mutka_send_rpacket(client->socket_fd, &client->out_raw_packet);
 
 
@@ -639,27 +641,38 @@ void mutka_disconnect(struct mutka_client* client) {
 #include <stdio.h> // <- temp
 
 void* mutka_client_recv_thread(void* arg) {
+    printf("%s: started\n",__func__);
+
     struct mutka_client* client = (struct mutka_client*)arg;
     while(true) {
         pthread_mutex_lock(&client->mutex);
 
         int rd = mutka_recv_incoming_packet(&client->inpacket, client->socket_fd);
+   
         if(rd == M_NEW_PACKET_AVAIL) {
             mutka_client_handle_packet(client);
+            printf("M_NEW_PACKET_AVAIL\n");
         }
         else
         if(rd == M_LOST_CONNECTION) {
             printf("lost connection | TODO: handle this\n");
         }
+        else
+        if(rd == M_PACKET_PARSE_ERR) {
+            printf("M_PACKET_PARSE_ERR\n");
+        }
 
         pthread_mutex_unlock(&client->mutex);
         mutka_sleep_ms(1); // Small delay to limit CPU usage.
     }
+
     return NULL;
 }
 
 void mutka_client_handle_packet(struct mutka_client* client) {
     // NOTE: client->mutex is locked here.
+
+    printf("%s: %i\n", __func__, client->inpacket.id);
 
     // Check for internal packets first.
     switch(client->inpacket.id) {
@@ -674,12 +687,12 @@ void mutka_client_handle_packet(struct mutka_client* client) {
                 return;
             }
 
-            mutka_str_move(
-                    &client->peer_metadata_publkey, 
+            mutka_openssl_BASE64_decode(
+                    &client->peer_metadata_publkey,
                     client->inpacket.elements[0].data.bytes,
                     client->inpacket.elements[0].data.size);
 
-            mutka_dump_strbytes(&client->inpacket.elements[0].data, "peer metadata publkey");
+            mutka_dump_strbytes(&client->peer_metadata_publkey, "peer metadata publkey");
 
             client->handshake_complete = true;
             return;

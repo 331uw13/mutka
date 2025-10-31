@@ -41,13 +41,8 @@ bool mutka_openssl_AES256GCM_decrypt
 );
 
 
-/*
-bool mutka_openssl_AES256CBC_encrypt(struct mutka_str* cipher_out, 
-        char* key, char* iv, char* data, size_t data_size);
-
-bool mutka_openssl_AES256CBC_decrypt(struct mutka_str* data_out,
-        char* key, char* iv, char* cipher, size_t cipher_size);
-*/
+bool mutka_openssl_BASE64_encode(struct mutka_str* output, char* data, size_t data_size);
+bool mutka_openssl_BASE64_decode(struct mutka_str* output, char* data, size_t data_size);
 
 
 #endif

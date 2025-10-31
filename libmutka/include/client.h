@@ -9,7 +9,6 @@
 #include "cryptography.h"
 
 
-#define MUTKA_NICKNAME_MAX 24
 
 
 struct mutka_client {
@@ -35,6 +34,7 @@ struct mutka_client {
 
 
 
+#define MUTKA_NICKNAME_MAX 24
 #define MUTKA_PATH_MAX 256
 
 // mutka_client_cfg flags
@@ -43,17 +43,19 @@ struct mutka_client {
 
 
 struct mutka_client_cfg {
-    char*     host;
-    uint16_t  port;
-    char*     nickname;
+    //char*     host;
+    //uint16_t  port;
+    //char*     nickname;
+
+    char      nickname[MUTKA_NICKNAME_MAX];
 
     bool      use_default_cfgdir;
-    char      mutka_cfgdir [MUTKA_PATH_MAX]; // Modified by 'mutka_validate_client_cfg()'
+    char      mutka_cfgdir[MUTKA_PATH_MAX]; // Modified by 'mutka_validate_client_cfg()'
                                              // If 'use_default_cfgdir' is set to 'true'
     
-    char      trusted_peers_dir [MUTKA_PATH_MAX];      // From mutka_validate_client_cfg()
-    char      trusted_privkey_path [MUTKA_PATH_MAX];   // From mutka_validate_client_cfg()
-    char      trusted_publkey_path [MUTKA_PATH_MAX];   // From mutka_validate_client_cfg()
+    char      trusted_peers_dir[MUTKA_PATH_MAX];      // From mutka_validate_client_cfg()
+    char      trusted_privkey_path[MUTKA_PATH_MAX];   // From mutka_validate_client_cfg()
+    char      trusted_publkey_path[MUTKA_PATH_MAX];   // From mutka_validate_client_cfg()
     
     char      trusted_privkey[ED25519_KEYLEN];
     char      trusted_publkey[ED25519_KEYLEN];
@@ -81,7 +83,7 @@ bool mutka_decrypt_trusted_privkey
 // Trusted public key is not encrypted.
 bool mutka_read_trusted_publkey(struct mutka_client_cfg* config);
 
-struct mutka_client* mutka_connect(struct mutka_client_cfg* config);
+struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, uint16_t port);
 
 // This function behaves little bit differently depending on the
 // Environment which the function was called from MUTKA_ENV_SERVER or MUTKA_ENV_CLIENT
