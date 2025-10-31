@@ -109,13 +109,14 @@ bool mutka_map_file(const char* path, char** out, size_t* out_size) {
         mutka_set_errmsg("%s: fstat() | %s", __func__, strerror(errno));
         goto out;
     }
+    
+    *out_size = sb.st_size;
 
     if(sb.st_size == 0) {
-        mutka_set_errmsg("%s: Empty file", __func__);
-        goto out;
+        //mutka_set_errmsg("%s: Empty file", __func__);
+        return true;
     }
 
-    *out_size = sb.st_size;
 
     if(out) {
         *out = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);

@@ -31,20 +31,26 @@ struct mutka_server {
     pthread_mutex_t mutex;
     
     struct mutka_server_cfg config;
+    struct mutka_keypair    host_ed25519;
     struct sockaddr_in      socket_addr;
     int                     socket_fd;
 
-    struct mutka_client*  clients;
-    uint32_t              num_clients;
+    struct mutka_client*    clients;
+    uint32_t                num_clients;
 
-    //struct mutka_raw_packet   in_raw_packet;
     struct mutka_raw_packet   out_raw_packet;
-
     struct mutka_packet       inpacket; // Last received parsed packet.
+
 };
 
-struct mutka_server* mutka_create_server(struct mutka_server_cfg config);
-void                 mutka_close_server(struct mutka_server* server);
+struct mutka_server* mutka_create_server
+(
+    struct mutka_server_cfg config,
+    const char* publkey_path,
+    const char* privkey_path
+);
+
+void mutka_close_server(struct mutka_server* server);
 
 void mutka_server_remove_client(struct mutka_server* server, struct mutka_client* client);
 

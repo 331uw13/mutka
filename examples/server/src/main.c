@@ -8,13 +8,13 @@
 
 void client_connected(struct mutka_server* server, struct mutka_client* client) {
 
-    printf("client connected. (socket_fd = %i)\n", client->socket_fd);
+    printf("client connected. (uid = %i) (socket_fd = %i)\n", client->uid, client->socket_fd);
 
 }
 
 void client_disconnected(struct mutka_server* server, struct mutka_client* client) {
     
-    printf("client disconnected. (socket_fd = %i)\n", client->socket_fd);
+    printf("client disconnected. (uid = %i) (socket_fd = %i)\n", client->uid, client->socket_fd);
 }
 
 
@@ -38,11 +38,15 @@ int main() {
         .packet_received_callback     = packet_received
     };
 
-    struct mutka_server* server = mutka_create_server(config);
+    // host's ED25519 are generated if they dont exist.
+    struct mutka_server* server = mutka_create_server(config, 
+            "./host_ed25519_public_key", 
+            "./host_ed25519_private_key");
+
     if(!server) {
         fprintf(stderr, "ERROR: %s\n", mutka_get_errmsg());
+        return 1;
     }
-
 
 
     printf("press enter to shutdown the server.\n");

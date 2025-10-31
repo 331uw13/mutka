@@ -4,9 +4,17 @@
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <time.h>
+#include <sys/stat.h>
 
 #include "../include/server.h"
 #include "../include/mutka.h"
+
+
+// DONT CHANGE AFTER SERVER HAS GENERATED ITS HOST KEYS.
+// Used to identify the key file.
+#define HOST_ED25519_PRIVKEY_HEADER_TAG "HOST_PRIVKEY"
+#define HOST_ED25519_PUBLKEY_HEADER_TAG "HOST_PUBLKEY"
 
 
 static struct server_global {
@@ -36,11 +44,157 @@ void* mutka_server_acceptor_thread_func(void* arg);
 void* mutka_server_recvdata_thread_func(void* arg);
 void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client* client);
 
-struct mutka_server* mutka_create_server(struct mutka_server_cfg config) { 
+
+
+static bool mutka_server_save_host_key(const char* path, const char* header_tag, struct mutka_str* key) {
+    mutka_file_clear(path);
+
+    if(!mutka_file_append(path, (char*)header_tag, strlen(header_tag))) {
+        mutka_set_errmsg("Failed to save \"%s\" (File header tag) | %s", 
+                header_tag, strerror(errno));
+        return false;
+    }
+    if(!mutka_file_append(path, key->bytes, key->size)) { 
+        mutka_set_errmsg("Failed to save \"%s\" | %s",
+                header_tag, strerror(errno));
+        return false;
+    }
+    return true;
+}
+
+static bool mutka_server_validate_keyfile(char* file_data, 
+        const char* expected_header_tag, size_t header_tag_len) {
+    for(size_t i = 0; i < header_tag_len; i++) {
+        if(file_data[i] != expected_header_tag[i]) {
+            mutka_set_errmsg("Host ed25519 key file header tag is changed or corrupted after it was created. "
+                    "Expected \"%s\"", expected_header_tag);
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool mutka_server_get_host_keys(struct mutka_server* server, const char* publkey_path, const char* privkey_path) {
+    bool result = false;
+    bool generate_new_keys = false;
+
+    if(!mutka_file_exists(publkey_path)) {
+        if(creat(publkey_path, S_IRUSR | S_IWUSR) < 0) {
+            mutka_set_errmsg("Failed to create '%s' | %s", publkey_path, strerror(errno));
+            goto out;
+        }
+        generate_new_keys = true;
+    }
+    if(!mutka_file_exists(privkey_path)) {
+        if(creat(privkey_path, S_IRUSR | S_IWUSR) < 0) {
+            mutka_set_errmsg("Failed to create '%s' | %s", privkey_path, strerror(errno));
+            goto out;
+        } 
+        generate_new_keys = true;
+    }
+
+
+    char* publkey_file = NULL;
+    size_t publkey_file_size = 0;
+
+    char* privkey_file = NULL;
+    size_t privkey_file_size = 0;
+
+    if(!mutka_map_file(publkey_path, &publkey_file, &publkey_file_size)) {
+        goto out;
+    }
+
+    if(!mutka_map_file(privkey_path, &privkey_file, &privkey_file_size)) {
+        goto out;
+    }
+   
+    server->host_ed25519 = mutka_init_keypair();
+
+    const size_t publkey_file_header_len = strlen(HOST_ED25519_PUBLKEY_HEADER_TAG);
+    const size_t privkey_file_header_len = strlen(HOST_ED25519_PRIVKEY_HEADER_TAG);
+
+    if((publkey_file_size < ED25519_KEYLEN + publkey_file_header_len)
+    || (privkey_file_size < ED25519_KEYLEN + privkey_file_header_len)) {
+        generate_new_keys = true;
+    }
+
+    if(generate_new_keys) { 
+        if(!mutka_openssl_ED25519_keypair(&server->host_ed25519)) {
+            goto out;
+        }
+
+        if(!mutka_server_save_host_key(publkey_path, 
+                    HOST_ED25519_PUBLKEY_HEADER_TAG, &server->host_ed25519.public_key)) {        
+            mutka_free_keypair(&server->host_ed25519);
+            goto out;
+        }
+
+        if(!mutka_server_save_host_key(privkey_path, 
+                    HOST_ED25519_PRIVKEY_HEADER_TAG, &server->host_ed25519.private_key)) {        
+            goto out;
+        }
+
+        mutka_dump_strbytes(&server->host_ed25519.public_key, "GENERETED host public key");
+        mutka_dump_strbytes(&server->host_ed25519.private_key, "GENERATED host private key");
+   
+        // Set only readable by user who created the files.
+        chmod(publkey_path, S_IRUSR);
+        chmod(privkey_path, S_IRUSR);
+    }
+    else {
+        // Read existing keys.
+
+        if(!mutka_server_validate_keyfile(publkey_file, 
+                    HOST_ED25519_PUBLKEY_HEADER_TAG, publkey_file_header_len)) {
+            goto out;
+        }
+
+        if(!mutka_server_validate_keyfile(privkey_file, 
+                    HOST_ED25519_PRIVKEY_HEADER_TAG, privkey_file_header_len)) {
+            goto out;
+        }
+
+
+        mutka_str_move(&server->host_ed25519.public_key,
+                publkey_file + publkey_file_header_len,
+                publkey_file_size - publkey_file_header_len);
+
+        mutka_str_move(&server->host_ed25519.private_key,
+                privkey_file + privkey_file_header_len,
+                privkey_file_size - privkey_file_header_len);
+    }
+
+    result = true;
+
+    mutka_dump_strbytes(&server->host_ed25519.public_key, "host public key");
+    mutka_dump_strbytes(&server->host_ed25519.private_key, "host private key");
+
+out:
+
+    if(!result) {
+        mutka_free_keypair(&server->host_ed25519);
+    }
+
+    printf("%s: OK\n", __func__);
+
+    return true;
+}
+
+struct mutka_server* mutka_create_server
+(
+    struct mutka_server_cfg config,
+    const char* publkey_path,
+    const char* privkey_path
+){ 
     struct mutka_server* server = malloc(sizeof *server);
     
-    server->config = config;
+    if(!mutka_server_get_host_keys(server, publkey_path, privkey_path)) {
+        free(server);
+        server = NULL;
+        goto out;
+    }
 
+    server->config = config;
     server->socket_fd = -1;
     server->socket_fd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -87,6 +241,8 @@ struct mutka_server* mutka_create_server(struct mutka_server_cfg config) {
         goto out;
     }
 
+    srand(time(NULL));
+
     server->inpacket.elements = NULL;
     server->inpacket.num_elements = 0;
     mutka_alloc_rpacket(&server->out_raw_packet, MUTKA_RAW_PACKET_DEFMEMSIZE);
@@ -117,6 +273,8 @@ void mutka_close_server(struct mutka_server* server) {
 
     pthread_join(global.acceptor_thread, NULL);
     pthread_join(global.recv_thread, NULL);
+
+    mutka_free_keypair(&server->host_ed25519);
 
     for(uint32_t i = 0; i < server->num_clients; i++) {
         mutka_disconnect(&server->clients[i]);
@@ -157,20 +315,42 @@ void mutka_server_remove_client(struct mutka_server* server, struct mutka_client
     unlock_server_mutex_ifneed(server);
 }
 
+static void mutka_server_make_client_uid(struct mutka_server* server, struct mutka_client* client) {
+    bool client_has_unique_id = true;
+    while(true) {
+        for(uint32_t i = 0; i < server->num_clients; i++) {
+            if(server->clients[i].uid == client->uid) {
+                client_has_unique_id = false;
+                break;
+            }
+        }
+        if(client_has_unique_id) {
+            break;
+        }
+
+        // Try again.
+        client->uid = rand();
+    }
+}
+
 static void mutka_server_handle_client_connect(struct mutka_server* server, struct mutka_client* client) {
     client->env = MUTKA_ENV_SERVER;
+    client->uid = rand();
+
+    mutka_server_make_client_uid(server, client);
 
     client->metadata_keys = mutka_init_keypair();
-    //mutka_str_alloc(&client->metadata_keys.public_key);
-    //mutka_str_alloc(&client->metadata_keys.private_key);
     mutka_str_alloc(&client->peer_metadata_publkey);
 
+    // Lock mutex here or 'accept' in mutka_server_acceptor_thread_func
+    // will keep server->mutex locked.
     pthread_mutex_lock(&server->mutex);
+    
     
     struct mutka_client* new_client_ptr = &server->clients[server->num_clients];
     *new_client_ptr = *client;
     server->num_clients++;
-   
+  
     server->config.client_connected_callback(server, new_client_ptr);
 }
 
@@ -242,7 +422,7 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
     printf("Handling MPACKET_HANDSHAKE, elements: %i\n", server->inpacket.num_elements);
 
     switch(server->inpacket.id) {
-        case MPACKET_HANDSHAKE:
+        case MPACKET_EXCHANGE_METADATA_KEYS:
             if(server->inpacket.num_elements == 0) {
                 return;
             }
@@ -250,8 +430,9 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
 
             // First save the received peer metadata public key.
             struct mutka_packet_elem* key_elem = &server->inpacket.elements[0];
-            mutka_str_move(&client->peer_metadata_publkey, key_elem->data.bytes, key_elem->data.size);
-            
+            mutka_openssl_BASE64_decode(&client->peer_metadata_publkey,
+                    key_elem->data.bytes,
+                    key_elem->data.size);
 
             // Generate X25519 keypair for the client which will be stored on the server.
             // See packet.h for more information about metadata keys.
@@ -261,7 +442,7 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
             mutka_dump_strbytes(&client->metadata_keys.public_key, "client(server side) metadata publkey");
 
 
-            mutka_rpacket_prep(&server->out_raw_packet, MPACKET_HANDSHAKE);
+            mutka_rpacket_prep(&server->out_raw_packet, MPACKET_EXCHANGE_METADATA_KEYS);
             mutka_rpacket_add_ent(&server->out_raw_packet,
                     "metadata_publkey", 
                     client->metadata_keys.public_key.bytes,

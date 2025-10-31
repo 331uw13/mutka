@@ -579,18 +579,26 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, 
 
     client->handshake_complete = false;
     client->metadata_keys = mutka_init_keypair();
-
     mutka_str_alloc(&client->peer_metadata_publkey);
-    mutka_openssl_X25519_keypair(&client->metadata_keys);
-
-    mutka_dump_strbytes(&client->metadata_keys.public_key, "my metadata publkey");
 
     // Create thread for receiving data.
     pthread_create(&global.recv_thread, NULL, mutka_client_recv_thread, client);
   
+    mutka_init_metadata_key_exchange(client);
+
+out:
+    return client;
+}
+
+
+void mutka_init_metadata_key_exchange(struct mutka_client* client) {
+    mutka_openssl_X25519_keypair(&client->metadata_keys);
+
+    mutka_dump_strbytes(&client->metadata_keys.public_key, "my metadata publkey");
+    
     // Initiate handshake by sending generated metadata public key.
     // see packet.h for more information about metadata keys.
-    mutka_rpacket_prep(&client->out_raw_packet, MPACKET_HANDSHAKE);
+    mutka_rpacket_prep(&client->out_raw_packet, MPACKET_EXCHANGE_METADATA_KEYS);
     mutka_rpacket_add_ent(&client->out_raw_packet, 
             "metadata_publkey", 
             client->metadata_keys.public_key.bytes, 
@@ -598,10 +606,6 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, 
             RPACKET_ENCODE_BASE64);
     
     mutka_send_rpacket(client->socket_fd, &client->out_raw_packet);
-
-
-out:
-    return client;
 }
 
 
@@ -676,7 +680,7 @@ void mutka_client_handle_packet(struct mutka_client* client) {
 
     // Check for internal packets first.
     switch(client->inpacket.id) {
-        case MPACKET_HANDSHAKE:
+        case MPACKET_EXCHANGE_METADATA_KEYS:
             if(client->handshake_complete) {
                 mutka_set_errmsg("Handshake has already been complete.");
                 return;

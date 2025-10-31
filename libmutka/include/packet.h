@@ -46,6 +46,10 @@ enum mutka_packet_ids : int {
     // This packet will be sent.
     MPACKET_RESEND,
 
+
+    // -----------------------------
+    // TODO: Update this information  (Outdated)
+    // -----------------------------
     // When client connects to server, first they generate X25519 metadata keypair.
     // And send the public key with this packet.
     //
@@ -54,8 +58,10 @@ enum mutka_packet_ids : int {
     // The metadata keys are used to encrypt packet metadata.
     // NOTE: packet metadata does _not_ contain any "secret" data
     // and is not a problem if someone gets hold of it, but this adds a layer of privacy.
-    MPACKET_HANDSHAKE,
+    MPACKET_EXCHANGE_METADATA_KEYS,
 
+
+    MPACKET_GET_CLIENTS_X25519_PUBLKEYS,
 
 
 
