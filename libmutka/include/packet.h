@@ -9,7 +9,7 @@
 #define MUTKA_RAW_PACKET_DEFMEMSIZE (1024 * 8) 
 
 
-// 'encoding' options for mutka_rpacket_add_ent()
+// Encoding options
 #define RPACKET_ENCODE_NONE    0x01
 #define RPACKET_ENCODE_BASE64  0x02
 

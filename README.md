@@ -28,18 +28,31 @@ Packets have this kind of structure:
 4 - expected_length
 8 - packet_data
 
-data_entry = "label":<data_encoding_option>"data"
+data_entry = "label":<data_encoding_option>"entry_data"
 
-Then the packet data may be:
+Then the 'packet_data' may be:
 packet_data = data_entry|data_entry ...
 
 
-The data_encoding_option can be following:
+'entry_data' is always encrypted when a normal message is sent.
+But if client and server exchange metadata keys public keys
+it will not be encrypted.
+
+
+The 'data_encoding_option' can be following:
 RPACKET_ENCODE_NONE    -  No encoding is done.
 RPACKET_ENCODE_BASE64  -  Used for bytes.
+(see "./libmutka/include/packet.h")
+```
 
+## About packet metadata
+```
+As seen in the packet structure the 'label'
+for packet 'data_entry' may expose some information
+about the packet.
+While this is not a big issue, encrypting the
+whole packet again adds layer of privacy for users
 
-
-
+This is done using "metadata keys".
 ```
 
