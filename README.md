@@ -7,19 +7,39 @@
 
 ## About "trusted-keys"
 ```
-
-trusted-keys are ED25519 long-term key pair used for authentication between clients
+trusted-keys are ED25519 long-term key pair
+used for authentication between clients
 so they know for sure they are talking to the right person.
-Each server member must have each other's PUBLIC trusted key to validate signatures.
+Each server member must 
+have each other's PUBLIC trusted key to validate signatures.
 
 They are stored in configurable directory on user's device.
 Default is "/home/user/.mutka/<user chosen nickname>/"
 
 The private key is encrypted using AES-256-GCM
 and the key for it is passed through key derivation function.
+```
+
+## About packets
+```
+Packets have this kind of structure:
+(first number is the byte offset)
+0 - packet_id
+4 - expected_length
+8 - packet_data
+
+data_entry = "label":<data_encoding_option>"data"
+
+Then the packet data may be:
+packet_data = data_entry|data_entry ...
+
+
+The data_encoding_option can be following:
+RPACKET_ENCODE_NONE    -  No encoding is done.
+RPACKET_ENCODE_BASE64  -  Used for bytes.
+
+
 
 
 ```
-
-
 
