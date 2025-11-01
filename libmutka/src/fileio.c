@@ -49,7 +49,7 @@ bool mutka_mkdir_p(const char* path, mode_t perm) {
         || (i+1 >= path_length)) {
             if(!mutka_dir_exists(buffer)) {
                 if(mkdir(buffer, perm) != 0) {
-                    mutka_set_errmsg("%s: %s", __func__, strerror(errno));
+                    mutka_set_errmsg("%s: \"%s\" %s", __func__, buffer, strerror(errno));
                     goto out;
                 }
             }
@@ -85,9 +85,16 @@ bool mutka_file_append(const char* path, char* data, size_t size) {
 
     int fd = open(path, O_WRONLY | O_APPEND);
     if(fd > 0) {
-        write(fd, data, size);
+        if(write(fd, data, size) < 0) {
+            mutka_set_errmsg("%s: Failed to write %li bytes to file \"%s\" | %s",
+                    __func__, size, path, strerror(errno));
+        }
         close(fd);
         result = true;
+    }
+    else {
+        mutka_set_errmsg("%s: Failed to open file \"%s\" | %s",
+                __func__, path, strerror(errno));
     }
 out:
     return result;

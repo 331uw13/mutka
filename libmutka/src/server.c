@@ -347,6 +347,18 @@ static void mutka_server_handle_client_connect(struct mutka_server* server, stru
     server->num_clients++;
   
     server->config.client_connected_callback(server, new_client_ptr);
+
+
+    mutka_dump_strbytes(&server->host_ed25519.public_key, "host public key");
+
+    // Send host public key for client.
+    mutka_rpacket_prep(&server->out_raw_packet, MPACKET_HOST_PUBLIC_KEY);
+    mutka_rpacket_add_ent(&server->out_raw_packet, 
+            "host_public_key",
+            server->host_ed25519.public_key.bytes,
+            server->host_ed25519.public_key.size,
+            RPACKET_ENCODE_BASE64);
+    mutka_send_rpacket(client->socket_fd, &server->out_raw_packet);
 }
 
 void* mutka_server_acceptor_thread_func(void* arg) {

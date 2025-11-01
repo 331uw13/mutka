@@ -101,6 +101,12 @@ void packet_received(struct mutka_client* client) {
 
 }
 
+bool add_new_trusted_host(struct mutka_client* client, struct mutka_str* host_publkey) {
+    printf("%s: Should trust host public key? (return true)\n", __func__);
+
+    return true;
+}
+
 
 int main(int argc, char** argv) {
     if(argc < 2) {
@@ -115,21 +121,12 @@ int main(int argc, char** argv) {
     struct mutka_client_cfg config = 
     (struct mutka_client_cfg)
     {
-        .use_default_cfgdir = true // Use "/home/user/.mutka/"
+        .use_default_cfgdir = true, // "use /home/user/.mutka/"
+
+        .add_new_trusted_host_callback = add_new_trusted_host
     };
 
-
-    // Copy nickname for configuration.
-    size_t nickname_len = strlen(nickname);
-    if(nickname_len >= MUTKA_NICKNAME_MAX) {
-        fprintf(stderr, "Too long nickname. max length is %i\n", MUTKA_NICKNAME_MAX);
-        return 1;
-    }
-
-    memmove(config.nickname, nickname, nickname_len);
-
-
-    if(!mutka_validate_client_cfg(&config)) {
+    if(!mutka_validate_client_cfg(&config, nickname)) {
         return 1;
     }
  
@@ -161,8 +158,6 @@ int main(int argc, char** argv) {
         }
 
         memset(passphase, 0, sizeof(passphase));
-
-
         return 0;
     }
 

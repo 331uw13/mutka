@@ -3,9 +3,8 @@
 
 
 #include <stdint.h>
+#include <sys/types.h>
 
-
-// TODO: Some operations need a return value.
 
 struct mutka_str {
     char* bytes;
@@ -35,8 +34,16 @@ void mutka_str_reserve(struct mutka_str* str, uint32_t size);
 char mutka_str_lastbyte(struct mutka_str* str);
 bool mutka_str_append(struct mutka_str* str, char* data, uint32_t size);
 
-void mutka_bytes_to_hexstr(struct mutka_str* in, struct mutka_str* out);
-void mutka_hexstr_to_bytes(struct mutka_str* in, struct mutka_str* out);
+
+// Miscellaneous utils.
+
+// Find 'part' starting index in 'data'
+// if not found -1 is returned.
+ssize_t mutka_charptr_find(char* data, size_t data_size, char* part, size_t part_size);
+
+
+//void mutka_bytes_to_hexstr(struct mutka_str* in, struct mutka_str* out);
+//void mutka_hexstr_to_bytes(struct mutka_str* in, struct mutka_str* out);
 
 
 #endif

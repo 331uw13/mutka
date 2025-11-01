@@ -44,8 +44,9 @@ enum mutka_packet_ids : int {
 
     // If received packet expected_size doesnt match received size.
     // This packet will be sent.
-    MPACKET_RESEND,
+    // TODO: MPACKET_RESEND,
 
+    MPACKET_HOST_PUBLIC_KEY,
 
     // -----------------------------
     // TODO: Update this information  (Outdated)

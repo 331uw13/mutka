@@ -11,6 +11,44 @@
 
 
 
+#define MUTKA_NICKNAME_MAX 24
+#define MUTKA_PATH_MAX 256
+#define MUTKA_HOST_ADDR_MAX 16
+// mutka_client_cfg flags
+#define MUTKA_CCFG_HAS_TRUSTED_PUBLKEY (1 << 0)
+#define MUTKA_CCFG_HAS_TRUSTED_PRIVKEY (1 << 1)
+
+
+struct mutka_client;
+
+struct mutka_client_cfg {
+    char  nickname[MUTKA_NICKNAME_MAX];
+
+    bool  use_default_cfgdir;
+    char  mutka_cfgdir[MUTKA_PATH_MAX]; // Modified by 'mutka_validate_client_cfg()'
+                                            // If 'use_default_cfgdir' is set to 'true'
+    
+    // Config paths are set by mutka_validate_client_cfg()
+    char  trusted_peers_dir[MUTKA_PATH_MAX];
+    char  trusted_privkey_path[MUTKA_PATH_MAX];
+    char  trusted_publkey_path[MUTKA_PATH_MAX];
+    char  trusted_hosts_path[MUTKA_PATH_MAX];
+
+    char  trusted_privkey[ED25519_KEYLEN]; // From mutka_decrypt_trusted_privkey()
+    char  trusted_publkey[ED25519_KEYLEN]; // From mutka_read_trusted_publkey()
+
+
+    // When client connects to server for the first time
+    // or doesnt have the server host ed25519 public key in trusted_hosts file.
+    // This callback can return 'true' if it allows it to be added, 
+    // If 'false' is returned client is going to be disconnected.
+    bool(*add_new_trusted_host_callback)(struct mutka_client*, struct mutka_str* /*host public key*/);
+
+    int flags;
+};
+
+
+
 struct mutka_client {
     pthread_mutex_t      mutex;
 
@@ -23,50 +61,24 @@ struct mutka_client {
 
 
     // ======( Not available on server side )======
-    
+   
+    char host_addr[MUTKA_HOST_ADDR_MAX];
+    uint32_t host_addr_len;
+
     struct mutka_keypair metadata_keys;
      
     struct mutka_raw_packet out_raw_packet;
     struct mutka_packet     inpacket; // Last received parsed packet.
     
     void(*packet_received_callback)(struct mutka_client*);
-    bool handshake_complete;
     
+    /*TODO REMOVE THIS*/bool handshake_complete;
+
+    struct mutka_client_cfg config;
 };
 
 
-
-#define MUTKA_NICKNAME_MAX 24
-#define MUTKA_PATH_MAX 256
-
-// mutka_client_cfg flags
-#define MUTKA_CCFG_HAS_TRUSTED_PUBLKEY (1 << 0)
-#define MUTKA_CCFG_HAS_TRUSTED_PRIVKEY (1 << 1)
-
-
-struct mutka_client_cfg {
-    //char*     host;
-    //uint16_t  port;
-    //char*     nickname;
-
-    char      nickname[MUTKA_NICKNAME_MAX];
-
-    bool      use_default_cfgdir;
-    char      mutka_cfgdir[MUTKA_PATH_MAX]; // Modified by 'mutka_validate_client_cfg()'
-                                             // If 'use_default_cfgdir' is set to 'true'
-    
-    char      trusted_peers_dir[MUTKA_PATH_MAX];      // From mutka_validate_client_cfg()
-    char      trusted_privkey_path[MUTKA_PATH_MAX];   // From mutka_validate_client_cfg()
-    char      trusted_publkey_path[MUTKA_PATH_MAX];   // From mutka_validate_client_cfg()
-    
-    char      trusted_privkey[ED25519_KEYLEN];
-    char      trusted_publkey[ED25519_KEYLEN];
-
-    int       flags;
-};
-
-
-bool mutka_validate_client_cfg(struct mutka_client_cfg* config);
+bool mutka_validate_client_cfg(struct mutka_client_cfg* config, char* nickname);
 bool mutka_cfg_trustedkeys_exists(struct mutka_client_cfg* config);
 
 // Passphase is required for encrypting the trusted private key file.

@@ -26,34 +26,102 @@ void mutka_client_handle_packet(struct mutka_client* client);
 
 #include <stdio.h>
 
-#define MUTKA_TRUSTED_PUBLKEY_SUFFIX ".public_key"
-#define MUTKA_TRUSTED_PRIVKEY_SUFFIX ".private_key"
-#define MUTKA_TRUSTED_PEERS_DIRNAME "trusted_peers"
-#define MUTKA_DEF_CFGDIR_NAME ".mutka/" // So the default config directory would be /home/user/.mutka/
 
+static bool mutka_add_config_file
+(
+    struct mutka_str* cfg_root,
+    struct mutka_str* cfg_root_tmp,
+    char* output,
+    char* nickname,
+    size_t nickname_length,
+    char* new_filepath
+){
+    mutka_str_move(cfg_root_tmp, cfg_root->bytes, cfg_root->size);
 
-bool mutka_validate_client_cfg(struct mutka_client_cfg* config) {
-    bool result = false;
+    mutka_str_append(cfg_root_tmp, nickname, nickname_length);
+    mutka_str_append(cfg_root_tmp, new_filepath, strlen(new_filepath));
 
-    size_t nickname_length = strlen(config->nickname);
-    if(nickname_length == 0) {
-        mutka_set_errmsg("Nickname is required.");
+    if(cfg_root_tmp->size >= MUTKA_PATH_MAX) {
+        mutka_set_errmsg("Error while creating config file path. \"%s\" is too long.", cfg_root_tmp->bytes);
         return false;
     }
 
-    config->flags = 0;
+    if(!mutka_file_exists(cfg_root_tmp->bytes)) {
+        if(creat(cfg_root_tmp->bytes, S_IRUSR | S_IWUSR) < 0) {
+            mutka_set_errmsg("Failed to create config file \"%s\"", cfg_root_tmp->bytes);
+            return false;
+        }
+    }
 
-    // TODO: Move the operations to their own functions for readability.
+    memcpy(output, cfg_root_tmp->bytes, cfg_root_tmp->size);
+    return true;
+}
+
+static bool mutka_add_config_dir
+(
+    struct mutka_str* cfg_root,
+    struct mutka_str* cfg_root_tmp,
+    char* output,
+    char* new_path
+){
+    mutka_str_move(cfg_root_tmp, cfg_root->bytes, cfg_root->size);
+    mutka_str_append(cfg_root_tmp, new_path, strlen(new_path));
+    if(mutka_str_lastbyte(cfg_root_tmp) != '/') {
+        mutka_str_pushbyte(cfg_root_tmp, '/');
+    }
+
+    mutka_str_nullterm(cfg_root_tmp);
+
+    if(cfg_root_tmp->size >= MUTKA_PATH_MAX) {
+        mutka_set_errmsg("Error while creating config path. '%s' is too long.", cfg_root_tmp->bytes);
+        return false;
+    }
+
+    
+    if(!mutka_dir_exists(cfg_root_tmp->bytes)) {
+        mutka_mkdir_p(cfg_root_tmp->bytes, S_IRWXU);
+    }
+    
+
+    memcpy(output, cfg_root_tmp->bytes, cfg_root_tmp->size);
+    return true;
+}
+
+
+bool mutka_validate_client_cfg(struct mutka_client_cfg* config, char* nickname) {
+    bool result = false;
+
+    if(!config->add_new_trusted_host_callback) {
+        mutka_set_errmsg("\"add_new_trusted_host_callback\" is missing.");
+        goto out;
+    }
+
+
+    size_t nickname_len = strlen(nickname);
+    if(nickname_len == 0) {
+        mutka_set_errmsg("Nickname is required.");
+        goto out;
+    }
+
+    if(nickname_len >= MUTKA_NICKNAME_MAX) {
+        mutka_set_errmsg("Nickname is too long. max length is %i", MUTKA_NICKNAME_MAX);
+        goto out;
+    }
+
+    memset(config->nickname, 0, sizeof(config->nickname));
+    memcpy(config->nickname, nickname, nickname_len);
+
+
+    config->flags = 0;
 
     // Config directory is copied to 'struct mutka_str' 
     // for making changes to it easier.
-    // trusted_peers_dir, trusted_privkey_path and trusted_publkey_path
-    // are constructed from the mutka_cfgdir.
-
     /*
-        Example how the directory looks like:
+        Example how the config directory looks like:
+        
         /home/user/.mutka/
         '- username123/
+           |- username123.trusted_hosts
            |- username123.public_key
            |- username123.private_key (encrypted)
            '- trusted_peers/
@@ -61,8 +129,10 @@ bool mutka_validate_client_cfg(struct mutka_client_cfg* config) {
               '- friend_B.public_key
     */
 
-    struct mutka_str tmpdir;
-    mutka_str_alloc(&tmpdir);
+    struct mutka_str cfg_root; // Config path.
+    struct mutka_str cfg_root_tmp;
+    mutka_str_alloc(&cfg_root);
+    mutka_str_alloc(&cfg_root_tmp);
 
 
     if(config->use_default_cfgdir) {
@@ -71,18 +141,22 @@ bool mutka_validate_client_cfg(struct mutka_client_cfg* config) {
         if(!pw) {
             mutka_set_errmsg("Failed to get user passwd "
                     "file entry (for home directory) | %s", strerror(errno));
-            goto out;
+            goto free_and_out;
         }
 
         size_t pwdir_len = strlen(pw->pw_dir);
         if(pwdir_len == 0) {
             mutka_set_errmsg("User doesnt have home directory? "
                     "(struct passwd* pw, pw->pw_dir length is zero)");
-            goto out;
+            goto free_and_out;
         }
 
-        mutka_str_move(&tmpdir, pw->pw_dir, pwdir_len);
-        
+    
+        mutka_str_move(&cfg_root, pw->pw_dir, pwdir_len);
+        if(mutka_str_lastbyte(&cfg_root) != '/') {
+            mutka_str_pushbyte(&cfg_root, '/');
+        }
+        mutka_str_append(&cfg_root, ".mutka", 6);
     }
     else {
         // User has chosen a config directory.
@@ -91,108 +165,87 @@ bool mutka_validate_client_cfg(struct mutka_client_cfg* config) {
         if(user_cfgdir_len == 0) {
             mutka_set_errmsg("When config.use_default_cfgdir is set to 'false', "
                     "config.mutka_cfgdir cant be empty.");
-            goto out;
+            goto free_and_out;
         }
 
-        mutka_str_move(&tmpdir, config->mutka_cfgdir, user_cfgdir_len);
+        if(user_cfgdir_len >= MUTKA_PATH_MAX) {
+            mutka_set_errmsg("Custom config path is too long.");
+        }
+
+        mutka_str_move(&cfg_root, config->mutka_cfgdir, user_cfgdir_len);
     }
 
-    if(mutka_str_lastbyte(&tmpdir) != '/') {
-        mutka_str_pushbyte(&tmpdir, '/');
+
+    // Add nickname to config path.
+
+    if(mutka_str_lastbyte(&cfg_root) != '/') {
+        mutka_str_pushbyte(&cfg_root, '/');
     }
 
-    if(config->use_default_cfgdir) {
-        mutka_str_append(&tmpdir, MUTKA_DEF_CFGDIR_NAME, strlen(MUTKA_DEF_CFGDIR_NAME));
+    mutka_str_append(&cfg_root, nickname, nickname_len);
+    mutka_str_pushbyte(&cfg_root, '/');
+
+    if(!mutka_dir_exists(cfg_root.bytes)) {
+        mutka_mkdir_p(cfg_root.bytes, S_IRWXU);
     }
 
-    // Different nicknames can have different configurations.
-    mutka_str_append(&tmpdir, config->nickname, nickname_length);
 
-    if(mutka_str_lastbyte(&tmpdir) != '/') {
-        mutka_str_pushbyte(&tmpdir, '/');
+
+    // Copy config path for editing.
+    mutka_str_move(&cfg_root_tmp, cfg_root.bytes, cfg_root.size);
+
+
+    if(!mutka_add_config_dir(&cfg_root, &cfg_root_tmp, config->trusted_peers_dir, "trusted_peers")) {
+        goto free_and_out;
+    }
+
+    if(!mutka_add_config_file(&cfg_root, &cfg_root_tmp, config->trusted_privkey_path,
+                nickname, nickname_len, ".private_key")) {
+        goto free_and_out;
     }
     
-
-    // Save validated config directory.
-
-    if(tmpdir.size >= sizeof(config->mutka_cfgdir)) {
-        mutka_set_errmsg("Config directory path is too long");
-        goto out;
+    if(!mutka_add_config_file(&cfg_root, &cfg_root_tmp, config->trusted_publkey_path,
+                nickname, nickname_len, ".public_key")) {
+        goto free_and_out;
     }
-    memset(config->mutka_cfgdir, 0, sizeof(config->mutka_cfgdir));
-    memmove(config->mutka_cfgdir, tmpdir.bytes, tmpdir.size);
-
-    // This will be needed later.
-    const size_t cfgdir_length = strlen(config->mutka_cfgdir);
-
-
-    // Construct the trusted_peers_dir.
-    mutka_str_append(&tmpdir, 
-            MUTKA_TRUSTED_PEERS_DIRNAME,
-            strlen(MUTKA_TRUSTED_PEERS_DIRNAME));
-
-    if(tmpdir.size >= sizeof(config->trusted_peers_dir)) {
-        mutka_set_errmsg("Trusted peers directory path is too long");
-        goto out;
-    }
-
-    memmove(config->trusted_peers_dir, tmpdir.bytes, tmpdir.size);
-
-
-    // Construct trusted_privkey_path.
-
-    // Go back to config directory.
-    mutka_str_move(&tmpdir, config->mutka_cfgdir, cfgdir_length);
     
-    mutka_str_append(&tmpdir, config->nickname, nickname_length);
-    mutka_str_append(&tmpdir, 
-            MUTKA_TRUSTED_PRIVKEY_SUFFIX,
-            strlen(MUTKA_TRUSTED_PRIVKEY_SUFFIX));
-
-    if(tmpdir.size >= sizeof(config->trusted_privkey_path)) {
-        mutka_set_errmsg("Trusted private key path is too long");
-        goto out;
-    }
-   
-    memmove(config->trusted_privkey_path, tmpdir.bytes, tmpdir.size);
-
-
-
-    // Go back to config directory.
-    mutka_str_move(&tmpdir, config->mutka_cfgdir, cfgdir_length);
-    
-    // Construct trusted_publkey_path.
-    mutka_str_append(&tmpdir, config->nickname, nickname_length);
-    mutka_str_append(&tmpdir, 
-            MUTKA_TRUSTED_PUBLKEY_SUFFIX,
-            strlen(MUTKA_TRUSTED_PUBLKEY_SUFFIX));
-
-    if(tmpdir.size >= sizeof(config->trusted_publkey_path)) {
-        mutka_set_errmsg("Trusted public key path is too long");
-        goto out;
+    if(!mutka_add_config_file(&cfg_root, &cfg_root_tmp, config->trusted_hosts_path,
+                nickname, nickname_len, ".trusted_hosts")) {
+        goto free_and_out;
     }
 
-    memmove(config->trusted_publkey_path, tmpdir.bytes, tmpdir.size);
-
-
-    printf("%s\n", config->mutka_cfgdir);
-    printf("%s\n", config->trusted_peers_dir);
-    printf("%s\n", config->trusted_privkey_path);
-    printf("%s\n", config->trusted_publkey_path);
-
+    printf("mutka_cfgdir         = '%s'\n", config->mutka_cfgdir);
+    printf("trusted_peers_dir    = '%s'\n", config->trusted_peers_dir);
+    printf("trusted_privkey_path = '%s'\n", config->trusted_privkey_path);
+    printf("trusted_publkey_path = '%s'\n", config->trusted_publkey_path);
+    printf("trusted_hosts_path   = '%s'\n", config->trusted_hosts_path);
+    printf("nickname             = '%s'\n", config->nickname);
     result = true;
 
-out:
-    mutka_str_free(&tmpdir);
+free_and_out:
+    mutka_str_free(&cfg_root);
+    mutka_str_free(&cfg_root_tmp);
 
+out:
     return result;
 }
 
 bool mutka_cfg_trustedkeys_exists(struct mutka_client_cfg* config) {
-    bool publkey_exists = mutka_file_exists(config->trusted_publkey_path);
-    bool privkey_exists = mutka_file_exists(config->trusted_privkey_path);
 
-    return (publkey_exists && privkey_exists);
+    size_t publkey_file_size = 0;
+    size_t privkey_file_size = 0;
+
+    if(mutka_file_exists(config->trusted_publkey_path)) {
+        mutka_map_file(config->trusted_publkey_path, NULL, &publkey_file_size);
+    }
+
+    if(mutka_file_exists(config->trusted_privkey_path)) {
+        mutka_map_file(config->trusted_privkey_path, NULL, &privkey_file_size);
+    }
+
+    // The private key is encrypted so
+    // it should have more bytes than just 'key length'
+    return (publkey_file_size >= ED25519_KEYLEN) && (privkey_file_size > ED25519_KEYLEN);
 }
 
 bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
@@ -204,7 +257,6 @@ bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
         goto out;
     }
 
-    // 'trusted_peers_dir' should contain 'mutka_cfgdir' as parent directory.
     if(!mutka_mkdir_p(config->trusted_peers_dir, S_IRWXU)) {
         goto out;
     }
@@ -212,7 +264,7 @@ bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
     if(!mutka_file_exists(config->trusted_privkey_path)) {
         if(creat(config->trusted_privkey_path, S_IRUSR | S_IWUSR) < 0) {
             mutka_set_errmsg("Failed to create trusted"
-                    " private key file | %s", strerror(errno));
+                    " private key file \"%s\" | %s", config->trusted_privkey_path, strerror(errno));
             goto out;
         }
     }
@@ -220,7 +272,7 @@ bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
     if(!mutka_file_exists(config->trusted_publkey_path)) {
         if(creat(config->trusted_publkey_path, S_IRUSR | S_IWUSR) < 0) {
             mutka_set_errmsg("Failed to create trusted"
-                    " public key file | %s", strerror(errno));
+                    " public key file \"%s\" | %s", config->trusted_publkey_path, strerror(errno));
             goto out;
         }
     }
@@ -355,6 +407,10 @@ bool mutka_read_trusted_publkey(struct mutka_client_cfg* config) {
     if(!mutka_map_file(config->trusted_publkey_path, &publkey_file, &publkey_file_size)) {
         goto out;
     }
+    if(publkey_file_size == 0) {
+        mutka_set_errmsg("Trusted public key file is empty.");
+        goto out;
+    }
 
     if(publkey_file_size != sizeof(config->trusted_publkey)) {
         mutka_set_errmsg("Unexpected trusted public key size: %li", publkey_file_size);
@@ -385,6 +441,14 @@ bool mutka_decrypt_trusted_privkey
     size_t privkey_file_size = 0;
 
     if(!mutka_map_file(config->trusted_privkey_path, &privkey_file, &privkey_file_size)) {
+        goto out;
+    }
+
+    // TODO: IMPORTANT! Should expect a size and not just follow trough if its "not empty"
+    // ----------------------------------------------------------------------------------
+
+    if(privkey_file_size == 0) {
+        mutka_set_errmsg("Trusted private key file is empty.");
         goto out;
     }
 
@@ -537,8 +601,16 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, 
 
     client = malloc(sizeof *client);
     client->env = MUTKA_ENV_NULL;
-
+    client->config = *config;
     pthread_mutex_init(&client->mutex, NULL);
+
+    client->host_addr_len = strlen(host);
+    if(client->host_addr_len >= MUTKA_HOST_ADDR_MAX) {
+        mutka_set_errmsg("Host address is too long");
+        goto out;
+    }
+    memset(client->host_addr, 0, sizeof(client->host_addr));
+    memcpy(client->host_addr, host, client->host_addr_len);
 
     client->socket_fd = -1;
     client->socket_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -673,20 +745,104 @@ void* mutka_client_recv_thread(void* arg) {
     return NULL;
 }
 
+
+static void mutka_client_save_host_public_key(struct mutka_client* client, struct mutka_str* public_key) {
+
+    // We should first ask to save it or not.
+    bool can_add = client->config.add_new_trusted_host_callback
+        (client, &client->inpacket.elements[0].data);
+   
+    if(!can_add) {
+        mutka_disconnect(client);
+        return;
+    }
+
+    if(!mutka_file_append(client->config.trusted_hosts_path,
+                client->host_addr, client->host_addr_len)) {
+        mutka_set_errmsg("Failed to save trusted host address to '%s'", client->config.trusted_hosts_path);
+        mutka_disconnect(client);
+        return;
+    }
+
+    if(!mutka_file_append(client->config.trusted_hosts_path, ":", 1)) {
+        mutka_set_errmsg("Failed to save trusted host address and public key separator to '%s'",
+                client->config.trusted_hosts_path);
+        mutka_disconnect(client);
+        return;
+    }
+
+    if(!mutka_file_append(client->config.trusted_hosts_path, public_key->bytes, public_key->size)) {
+        mutka_set_errmsg("Failed to save trusted host public key'%s'",
+                client->config.trusted_hosts_path);
+        mutka_disconnect(client);
+        return;
+    }
+}
+
+// Process received host ed25519 public key.
+static void mutka_client_process_recv_host_key(struct mutka_client* client) {
+
+    printf("host ed25519 public key: %s\n", client->inpacket.elements[0].data.bytes);
+
+    char* trusted_hosts_file = NULL;
+    size_t trusted_hosts_file_size = 0;
+
+    if(!mutka_map_file(client->config.trusted_hosts_path, &trusted_hosts_file, &trusted_hosts_file_size)) {
+        return;
+    }
+
+
+    ssize_t host_index = mutka_charptr_find(
+            trusted_hosts_file, 
+            trusted_hosts_file_size,
+            client->host_addr,
+            client->host_addr_len);
+
+    if(host_index < 0) {
+        // Not found.
+        mutka_client_save_host_public_key(client, &client->inpacket.elements[0].data);
+
+    }
+    else {
+        // Key should exist, find it and compare it.
+
+
+
+
+    }
+
+    munmap(trusted_hosts_file, trusted_hosts_file_size);
+}
+
 void mutka_client_handle_packet(struct mutka_client* client) {
     // NOTE: client->mutex is locked here.
 
-    printf("%s: %i\n", __func__, client->inpacket.id);
+    printf("%s: (packet id = %i)\n", __func__, client->inpacket.id);
+
+    // NOTE: Remember to return from switch statement instead of break
+    //       if handling internal packets.
+
+    // TODO: Create better system to handle packet element sizes
 
     // Check for internal packets first.
     switch(client->inpacket.id) {
+        case MPACKET_HOST_PUBLIC_KEY: 
+            if(client->inpacket.num_elements != 1) {
+                mutka_set_errmsg("Failed to receive host public key.");
+                return;
+            }
+
+            mutka_client_process_recv_host_key(client);
+            return;
+
         case MPACKET_EXCHANGE_METADATA_KEYS:
             if(client->handshake_complete) {
+                // TODO: REMOVE THIS
                 mutka_set_errmsg("Handshake has already been complete.");
                 return;
             }
 
-            if(client->inpacket.num_elements == 0) {
+            if(client->inpacket.num_elements != 1) {
                 mutka_set_errmsg("Failed to receive handshake packet.");
                 return;
             }

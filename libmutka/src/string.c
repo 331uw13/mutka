@@ -102,7 +102,7 @@ void mutka_str_reserve(struct mutka_str* str, uint32_t size) {
     mutka_str_memcheck(str, size);
 }
 
-    
+/* 
 static const char HEX[] = "0123456789ABCDEF";
 void mutka_bytes_to_hexstr(struct mutka_str* in, struct mutka_str* out) {
     for(uint32_t i = 0; i < in->size; i++) {
@@ -129,6 +129,7 @@ void mutka_hexstr_to_bytes(struct mutka_str* in, struct mutka_str* out) {
         }
     }
 }
+*/
 
 char mutka_str_lastbyte(struct mutka_str* str) {
     if(!str) {
@@ -140,7 +141,8 @@ char mutka_str_lastbyte(struct mutka_str* str) {
     if(str->size >= str->memsize) {
         return 0;
     }
-    return str->bytes[str->size];
+
+    return str->bytes[(str->size > 0) ? str->size-1 : 0];
 }
 
 bool mutka_str_append(struct mutka_str* str, char* data, uint32_t size) {
@@ -152,6 +154,47 @@ bool mutka_str_append(struct mutka_str* str, char* data, uint32_t size) {
     str->size += size;
     
     return true;
+}
+
+ssize_t mutka_charptr_find(char* data, size_t data_size, char* part, size_t part_size) {
+    ssize_t found_index = -1;
+
+    if(part_size == 0) {
+        goto skip;
+    }
+    if(data_size < part_size) {
+        goto skip;
+    }
+
+    size_t part_idx = 0;
+    
+    char* ch = &data[0];
+    while(ch < data + data_size) {
+        if(*ch == part[0]) {
+            if(ch + part_size > data + data_size) {
+                break; // Prevent out of bounds read.
+            }
+
+            bool found = true;
+           
+            // First character of 'part' was found, check if rest match.
+            for(size_t pi = 0; pi < part_size; pi++) {
+                if(*ch != part[pi]) {
+                    found = false;
+                    break;
+                }
+                ch++;
+            }
+            if(found) {
+                found_index = (ch - data) - part_size;
+                break;
+            }
+        }
+        ch++;
+    }
+
+skip:
+    return found_index;
 }
 
 
