@@ -14,6 +14,8 @@
 #define MUTKA_NICKNAME_MAX 24
 #define MUTKA_PATH_MAX 256
 #define MUTKA_HOST_ADDR_MAX 16
+#define MUTKA_HOST_PORT_MAX 8
+
 // mutka_client_cfg flags
 #define MUTKA_CCFG_HAS_TRUSTED_PUBLKEY (1 << 0)
 #define MUTKA_CCFG_HAS_TRUSTED_PRIVKEY (1 << 1)
@@ -26,7 +28,7 @@ struct mutka_client_cfg {
 
     bool  use_default_cfgdir;
     char  mutka_cfgdir[MUTKA_PATH_MAX]; // Modified by 'mutka_validate_client_cfg()'
-                                            // If 'use_default_cfgdir' is set to 'true'
+                                        // If 'use_default_cfgdir' is set to 'true'
     
     // Config paths are set by mutka_validate_client_cfg()
     char  trusted_peers_dir[MUTKA_PATH_MAX];
@@ -62,13 +64,15 @@ struct mutka_client {
 
     // ======( Not available on server side )======
    
-    char host_addr[MUTKA_HOST_ADDR_MAX];
-    uint32_t host_addr_len;
+    char      host_addr[MUTKA_HOST_ADDR_MAX];
+    uint32_t  host_addr_len;
 
-    struct mutka_keypair metadata_keys;
-     
-    struct mutka_raw_packet out_raw_packet;
-    struct mutka_packet     inpacket; // Last received parsed packet.
+    char      host_port[MUTKA_HOST_PORT_MAX];
+    uint32_t  host_port_len;
+
+    struct mutka_keypair     metadata_keys;
+    struct mutka_raw_packet  out_raw_packet;
+    struct mutka_packet      inpacket; // Last received parsed packet.
     
     void(*packet_received_callback)(struct mutka_client*);
     
@@ -98,7 +102,7 @@ bool mutka_decrypt_trusted_privkey
 // Trusted public key is not encrypted.
 bool mutka_read_trusted_publkey(struct mutka_client_cfg* config);
 
-struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, uint16_t port);
+struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, char* port);
 
 void mutka_init_metadata_key_exchange(struct mutka_client* client);
 

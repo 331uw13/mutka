@@ -71,6 +71,7 @@ bool mutka_file_clear(const char* path) {
     return (fd > 0);
 }
 
+
 bool mutka_file_append(const char* path, char* data, size_t size) {
     bool result = false;
     if(!path) {
@@ -98,6 +99,17 @@ bool mutka_file_append(const char* path, char* data, size_t size) {
     }
 out:
     return result;
+}
+
+ssize_t mutka_file_size(const char* path) {
+
+    struct stat sb;
+    if(lstat(path, &sb) < 0) {
+        mutka_set_errmsg("%s: lstat() | %s", __func__, strerror(errno));
+        return -1;
+    }
+
+    return sb.st_size;
 }
 
 bool mutka_map_file(const char* path, char** out, size_t* out_size) {

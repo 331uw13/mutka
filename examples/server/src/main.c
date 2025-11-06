@@ -5,6 +5,12 @@
 #include "../../../libmutka/include/mutka.h"
 
 
+void mutka_error(char* buffer, size_t size) {
+    (void)size;
+    printf("[libmutka error]: %s\n", buffer);
+}
+
+
 
 void client_connected(struct mutka_server* server, struct mutka_client* client) {
 
@@ -24,6 +30,20 @@ void packet_received(struct mutka_server* server, struct mutka_client* client) {
 
 }
 
+bool accept_host_keygen() {
+    printf("\033[33m"
+            "Host ed25519 keypair doesnt exist or they are not valid.\n"
+            "Server is about to generate new signature keypair for itself.\n"
+            "If the host signature keys change and old clients connect back\n"
+            "they will see a warning about this.\n\n"
+            "Accept? (yes/no): \033[0m");
+    fflush(stdout);
+
+    char input[6] = { 0 };
+    read(STDIN_FILENO, input, sizeof(input));
+    
+    return ((input[0] == 'Y') || (input[0] == 'y'));
+}
 
 
 int main() {
@@ -33,10 +53,14 @@ int main() {
         .max_clients = 8,
         .flags = (MUTKA_S_FLG_REUSEADDR),
 
-        .client_connected_callback    = client_connected,
-        .client_disconnected_callback = client_disconnected,
-        .packet_received_callback     = packet_received
+        .accept_host_keygen_callback    = accept_host_keygen,
+        .client_connected_callback      = client_connected,
+        .client_disconnected_callback   = client_disconnected,
+        .packet_received_callback       = packet_received
     };
+    
+    mutka_set_errmsg_callback(mutka_error);
+
 
     // host's ED25519 are generated if they dont exist.
     struct mutka_server* server = mutka_create_server(config, 
@@ -44,7 +68,6 @@ int main() {
             "./host_ed25519_private_key");
 
     if(!server) {
-        fprintf(stderr, "ERROR: %s\n", mutka_get_errmsg());
         return 1;
     }
 

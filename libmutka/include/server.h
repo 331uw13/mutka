@@ -20,6 +20,7 @@ struct mutka_server_cfg {
     uint32_t max_clients;
     int flags;
 
+    bool(*accept_host_keygen_callback)();
     void(*client_connected_callback)(struct mutka_server*, struct mutka_client*);
     void(*client_disconnected_callback)(struct mutka_server*, struct mutka_client*);
     void(*packet_received_callback)(struct mutka_server*, struct mutka_client*);

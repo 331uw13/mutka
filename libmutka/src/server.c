@@ -46,8 +46,16 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
 
 
 
-static bool mutka_server_save_host_key(const char* path, const char* header_tag, struct mutka_str* key) {
-    mutka_file_clear(path);
+static bool mutka_server_save_host_key
+(
+    const char* path,
+    const char* header_tag,
+    struct mutka_str* key
+){
+    if(creat(path, S_IRUSR | S_IWUSR) < 0) {
+        mutka_set_errmsg("Failed to create file \"%s\" | %s", path, strerror(errno));
+        return false;
+    }
 
     if(!mutka_file_append(path, (char*)header_tag, strlen(header_tag))) {
         mutka_set_errmsg("Failed to save \"%s\" (File header tag) | %s", 
@@ -62,8 +70,12 @@ static bool mutka_server_save_host_key(const char* path, const char* header_tag,
     return true;
 }
 
-static bool mutka_server_validate_keyfile(char* file_data, 
-        const char* expected_header_tag, size_t header_tag_len) {
+static bool mutka_server_validate_keyfile
+(
+    char* file_data,
+    const char* expected_header_tag,
+    const size_t header_tag_len
+){
     for(size_t i = 0; i < header_tag_len; i++) {
         if(file_data[i] != expected_header_tag[i]) {
             mutka_set_errmsg("Host ed25519 key file header tag is changed or corrupted after it was created. "
@@ -74,105 +86,122 @@ static bool mutka_server_validate_keyfile(char* file_data,
     return true;
 }
 
-static bool mutka_server_get_host_keys(struct mutka_server* server, const char* publkey_path, const char* privkey_path) {
+static bool mutka_server_generate_host_keys
+(
+    struct mutka_server* server,
+    const char* publkey_path,
+    const char* privkey_path
+){
+    if(!mutka_openssl_ED25519_keypair(&server->host_ed25519)) {
+        mutka_set_errmsg("mutka_openssl_ED25519_keypair() Failed.");
+        return false;
+    }
+
+    if(mutka_file_exists(publkey_path)) {
+        remove(publkey_path);
+    }
+
+    if(mutka_file_exists(privkey_path)) {
+        remove(privkey_path);
+    }
+
+    if(!mutka_server_save_host_key(publkey_path, 
+                HOST_ED25519_PUBLKEY_HEADER_TAG, 
+                &server->host_ed25519.public_key)) {
+        return false;
+    }
+
+    if(!mutka_server_save_host_key(privkey_path, 
+                HOST_ED25519_PRIVKEY_HEADER_TAG, 
+                &server->host_ed25519.private_key)) {
+        return false;
+    }
+
+    chmod(publkey_path, S_IRUSR);
+    chmod(privkey_path, S_IRUSR);
+
+    return true;
+}
+
+static bool mutka_server_read_host_keys
+(
+    struct mutka_server* server,
+    const char* publkey_path,
+    const char* privkey_path
+){
     bool result = false;
-    bool generate_new_keys = false;
 
     if(!mutka_file_exists(publkey_path)) {
-        if(creat(publkey_path, S_IRUSR | S_IWUSR) < 0) {
-            mutka_set_errmsg("Failed to create '%s' | %s", publkey_path, strerror(errno));
-            goto out;
-        }
-        generate_new_keys = true;
+        goto out;
     }
     if(!mutka_file_exists(privkey_path)) {
-        if(creat(privkey_path, S_IRUSR | S_IWUSR) < 0) {
-            mutka_set_errmsg("Failed to create '%s' | %s", privkey_path, strerror(errno));
-            goto out;
-        } 
-        generate_new_keys = true;
+        goto out;
     }
 
+    const size_t publkey_expected_header_len = strlen(HOST_ED25519_PUBLKEY_HEADER_TAG);
+    const size_t privkey_expected_header_len = strlen(HOST_ED25519_PRIVKEY_HEADER_TAG);
+
+    if(mutka_file_size(publkey_path) 
+            != (ssize_t)(publkey_expected_header_len + ED25519_KEYLEN)) {
+        goto out;
+    }
+
+    if(mutka_file_size(privkey_path) 
+            != (ssize_t)(privkey_expected_header_len + ED25519_KEYLEN)) {
+        goto out;
+    }
 
     char* publkey_file = NULL;
     size_t publkey_file_size = 0;
 
     char* privkey_file = NULL;
     size_t privkey_file_size = 0;
-
+    
     if(!mutka_map_file(publkey_path, &publkey_file, &publkey_file_size)) {
         goto out;
     }
-
+ 
     if(!mutka_map_file(privkey_path, &privkey_file, &privkey_file_size)) {
-        goto out;
+        goto unmap_and_out;
     }
-   
-    server->host_ed25519 = mutka_init_keypair();
-
-    const size_t publkey_file_header_len = strlen(HOST_ED25519_PUBLKEY_HEADER_TAG);
-    const size_t privkey_file_header_len = strlen(HOST_ED25519_PRIVKEY_HEADER_TAG);
-
-    if((publkey_file_size < ED25519_KEYLEN + publkey_file_header_len)
-    || (privkey_file_size < ED25519_KEYLEN + privkey_file_header_len)) {
-        generate_new_keys = true;
+    
+    if(!mutka_server_validate_keyfile(publkey_file, 
+                HOST_ED25519_PUBLKEY_HEADER_TAG, publkey_expected_header_len)) {
+        mutka_set_errmsg("Host ed25519 PUBLIC key file header doesnt match expected value.");
+        goto unmap_and_out;
     }
 
-    if(generate_new_keys) { 
-        if(!mutka_openssl_ED25519_keypair(&server->host_ed25519)) {
-            goto out;
-        }
-
-        if(!mutka_server_save_host_key(publkey_path, 
-                    HOST_ED25519_PUBLKEY_HEADER_TAG, &server->host_ed25519.public_key)) {        
-            mutka_free_keypair(&server->host_ed25519);
-            goto out;
-        }
-
-        if(!mutka_server_save_host_key(privkey_path, 
-                    HOST_ED25519_PRIVKEY_HEADER_TAG, &server->host_ed25519.private_key)) {        
-            goto out;
-        }
-
-        // Set only readable by user who created the files.
-        chmod(publkey_path, S_IRUSR);
-        chmod(privkey_path, S_IRUSR);
+    if(!mutka_server_validate_keyfile(privkey_file, 
+                HOST_ED25519_PRIVKEY_HEADER_TAG, privkey_expected_header_len)) {
+        mutka_set_errmsg("Host ed25519 PRIVATE key file header doesnt match expected value.");
+        goto unmap_and_out;
     }
-    else {
-        // Read existing keys.
-
-        if(!mutka_server_validate_keyfile(publkey_file, 
-                    HOST_ED25519_PUBLKEY_HEADER_TAG, publkey_file_header_len)) {
-            goto out;
-        }
-
-        if(!mutka_server_validate_keyfile(privkey_file, 
-                    HOST_ED25519_PRIVKEY_HEADER_TAG, privkey_file_header_len)) {
-            goto out;
-        }
 
 
-        mutka_str_move(&server->host_ed25519.public_key,
-                publkey_file + publkey_file_header_len,
-                publkey_file_size - publkey_file_header_len);
+    mutka_str_move(&server->host_ed25519.public_key, 
+            publkey_file + publkey_expected_header_len,
+            publkey_file_size - publkey_expected_header_len);
 
-        mutka_str_move(&server->host_ed25519.private_key,
-                privkey_file + privkey_file_header_len,
-                privkey_file_size - privkey_file_header_len);
-    }
+    mutka_str_move(&server->host_ed25519.private_key, 
+            privkey_file + privkey_expected_header_len,
+            privkey_file_size - privkey_expected_header_len);
+
+    printf("\033[32m(Existing host ed25519 keys seem to be valid)\033[0m\n");
 
     result = true;
 
+unmap_and_out:
 
-out:
-
-    if(!result) {
-        mutka_free_keypair(&server->host_ed25519);
+    if(publkey_file) {
+        munmap(publkey_file, publkey_file_size);
     }
 
-    printf("%s: OK\n", __func__);
+    if(privkey_file) {
+        munmap(privkey_file, privkey_file_size);
+    }
 
-    return true;
+out:
+    return result;
 }
 
 struct mutka_server* mutka_create_server
@@ -182,11 +211,27 @@ struct mutka_server* mutka_create_server
     const char* privkey_path
 ){ 
     struct mutka_server* server = malloc(sizeof *server);
-    
-    if(!mutka_server_get_host_keys(server, publkey_path, privkey_path)) {
-        free(server);
-        server = NULL;
-        goto out;
+    server->host_ed25519 = mutka_init_keypair();
+
+    if(!mutka_server_read_host_keys(server, publkey_path, privkey_path)) {
+       
+        if(!config.accept_host_keygen_callback()) {
+            mutka_set_errmsg("Host ed25519 key generation was cancelled.");
+            mutka_free_keypair(&server->host_ed25519);
+            free(server);
+            server = NULL;
+            goto out;
+        }
+
+        // Host keys dont exists or they are not valid
+        // Try to generate and save new pair.
+        if(!mutka_server_generate_host_keys(server, publkey_path, privkey_path)) {
+            mutka_set_errmsg("Failed to generate new host keys");
+            mutka_free_keypair(&server->host_ed25519);
+            free(server);
+            server = NULL;
+            goto out;
+        }
     }
 
     server->config = config;

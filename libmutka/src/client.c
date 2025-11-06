@@ -586,7 +586,7 @@ out:
 }
 
 
-struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, uint16_t port) {
+struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, char* port) {
     struct mutka_client* client = NULL;
 
     if(!(config->flags & MUTKA_CCFG_HAS_TRUSTED_PUBLKEY)) {
@@ -599,11 +599,19 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, 
         goto out;
     }
 
+    const int port_num = atoi(port);
+    if((port_num < 0) || (port_num > UINT16_MAX)) {
+        mutka_set_errmsg("Given host port \"%s\" cannot be correct. It must be in range of 0 to %i",
+                port, UINT16_MAX);
+        goto out;
+    }
+
     client = malloc(sizeof *client);
     client->env = MUTKA_ENV_NULL;
     client->config = *config;
     pthread_mutex_init(&client->mutex, NULL);
 
+    // Copy host address for future use.
     client->host_addr_len = strlen(host);
     if(client->host_addr_len >= MUTKA_HOST_ADDR_MAX) {
         mutka_set_errmsg("Host address is too long");
@@ -611,6 +619,17 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, 
     }
     memset(client->host_addr, 0, sizeof(client->host_addr));
     memcpy(client->host_addr, host, client->host_addr_len);
+
+    // Copy host port for future use.
+    client->host_port_len = strlen(port);
+    if(client->host_port_len >= MUTKA_HOST_PORT_MAX) {
+        mutka_set_errmsg("Host port is too long");
+        goto out;
+    }
+    memset(client->host_port, 0, sizeof(client->host_port));
+    memcpy(client->host_port, port, client->host_port_len);
+
+
 
     client->socket_fd = -1;
     client->socket_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -622,7 +641,7 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, 
     }
 
     client->socket_addr.sin_family = AF_INET;
-    client->socket_addr.sin_port = htons(port);
+    client->socket_addr.sin_port = htons(port_num);
 
     inet_pton(AF_INET, host, &client->socket_addr.sin_addr);
 
@@ -634,7 +653,7 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, 
 
     if(connect_result != 0) {
         mutka_set_errmsg("Connection failed to (%s:%i) | %s", 
-                host, port, strerror(errno));
+                host, port_num, strerror(errno));
         close(client->socket_fd);
         free(client);
         client = NULL;
@@ -746,72 +765,104 @@ void* mutka_client_recv_thread(void* arg) {
 }
 
 
-static void mutka_client_save_host_public_key(struct mutka_client* client, struct mutka_str* public_key) {
+static bool mutka_client_save_host_public_key
+(
+    struct mutka_client* client,
+    struct mutka_str* public_key,
+    char* host_tag
+){
+    bool result = false;
 
     // We should first ask to save it or not.
-    bool can_add = client->config.add_new_trusted_host_callback
-        (client, &client->inpacket.elements[0].data);
+    bool can_add = client->config.add_new_trusted_host_callback(client, &client->inpacket.elements[0].data);
    
     if(!can_add) {
-        mutka_disconnect(client);
-        return;
+        goto out;
     }
 
-    if(!mutka_file_append(client->config.trusted_hosts_path,
-                client->host_addr, client->host_addr_len)) {
-        mutka_set_errmsg("Failed to save trusted host address to '%s'", client->config.trusted_hosts_path);
-        mutka_disconnect(client);
-        return;
+    char buffer[512] = { 0 };
+    const size_t buffer_len = snprintf(buffer, sizeof(buffer)-1, "%s%s",
+            host_tag,
+            public_key->bytes);
+
+    printf("%s: %s\n", __func__, buffer);
+
+    if(!mutka_file_append(client->config.trusted_hosts_path, buffer, buffer_len)) {
+        mutka_set_errmsg("Failed to save trusted host to \"%s\"", client->config.trusted_hosts_path);
+        goto out;
     }
 
-    if(!mutka_file_append(client->config.trusted_hosts_path, ":", 1)) {
-        mutka_set_errmsg("Failed to save trusted host address and public key separator to '%s'",
-                client->config.trusted_hosts_path);
-        mutka_disconnect(client);
-        return;
-    }
+    result = true;
 
-    if(!mutka_file_append(client->config.trusted_hosts_path, public_key->bytes, public_key->size)) {
-        mutka_set_errmsg("Failed to save trusted host public key'%s'",
-                client->config.trusted_hosts_path);
-        mutka_disconnect(client);
-        return;
-    }
+out:
+    return result;
 }
 
 // Process received host ed25519 public key.
-static void mutka_client_process_recv_host_key(struct mutka_client* client) {
+static bool mutka_client_process_recv_host_key(struct mutka_client* client) {
+    bool result = false;
 
-    printf("host ed25519 public key: %s\n", client->inpacket.elements[0].data.bytes);
+    struct mutka_str* recv_host_publkey = &client->inpacket.elements[0].data;
+    printf("(%i) recv host ed25519 public key: %s\n", recv_host_publkey->size, recv_host_publkey->bytes);
+
+
+    // "host_addr#host_port:"
+    char host_tag[128] = { 0 };
+    const size_t host_tag_len = snprintf(host_tag, sizeof(host_tag)-1, 
+            "%s#%s:", client->host_addr, client->host_port);
 
     char* trusted_hosts_file = NULL;
     size_t trusted_hosts_file_size = 0;
 
     if(!mutka_map_file(client->config.trusted_hosts_path, &trusted_hosts_file, &trusted_hosts_file_size)) {
-        return;
+        goto out;
     }
 
-
+    // Try to find 'host_tag' from the saved trusted hosts file.
     ssize_t host_index = mutka_charptr_find(
             trusted_hosts_file, 
             trusted_hosts_file_size,
-            client->host_addr,
-            client->host_addr_len);
+            host_tag,
+            host_tag_len);
 
     if(host_index < 0) {
-        // Not found.
-        mutka_client_save_host_public_key(client, &client->inpacket.elements[0].data);
-
+        // 'host_tag' was not found.
+        if(!mutka_client_save_host_public_key(client, recv_host_publkey, host_tag)) {
+            goto unmap_and_out;
+        }
     }
     else {
-        // Key should exist, find it and compare it.
+        // Key should exist, compare it to expected value.
 
+        host_index += host_tag_len;
 
+        if(host_index >= trusted_hosts_file_size) {
+            mutka_set_errmsg("Something went wrong when tried to find saved host public key from file. "
+                    "(host_index >= trusted_hosts_file_size)");
+            goto unmap_and_out;
+        }
 
+        for(size_t i = host_index; i < trusted_hosts_file_size; i++) {
+
+            const char expected_publkey_byte = recv_host_publkey->bytes[i - host_index];
+            const char saved_publkey_byte = trusted_hosts_file[i];
+
+            if(expected_publkey_byte != saved_publkey_byte) {
+                fprintf(stderr, "\033[31m\033[1m WARNING: HOST SIGNATURE KEYS HAVE CHANGED!\033[0m\n");
+                goto unmap_and_out;
+            }
+        }
+        printf("\033[32mHost key matched\033[0m\n");
 
     }
 
+    result = true;
+
+unmap_and_out:
     munmap(trusted_hosts_file, trusted_hosts_file_size);
+
+out:
+    return result;
 }
 
 void mutka_client_handle_packet(struct mutka_client* client) {

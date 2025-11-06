@@ -8,7 +8,7 @@
 #include "../include/packet.h"
 #include "../include/mutka.h"
 
-#define DEBUG
+//#define DEBUG
 
 
 
