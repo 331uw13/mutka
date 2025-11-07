@@ -7,8 +7,9 @@
 
 #include "../include/packet.h"
 #include "../include/mutka.h"
+#include "../include/memory.h"
 
-//#define DEBUG
+#define DEBUG
 
 
 
@@ -36,8 +37,30 @@ void mutka_rpacket_prep(struct mutka_raw_packet* packet, int packet_id) {
     packet->has_write_error = false;
 }
 
+void mutka_inpacket_init(struct mutka_packet* inpacket) {
+    inpacket->expected_size = 0;
+    inpacket->id = 0;
+    inpacket->elements = NULL;
+    inpacket->num_elements = 0;
+    inpacket->num_elems_allocated = 0;
+}
 
-static bool mutka_packet_add_bytes(struct mutka_raw_packet* packet, const char* bytes, size_t size) {
+void mutka_free_packet(struct mutka_packet* packet) {
+    if(!packet->elements) {
+        return;
+    }
+
+    for(size_t i = 0; i < packet->num_elements; i++) {
+        struct mutka_packet_elem* elem = &packet->elements[i];
+        mutka_str_free(&elem->label);
+        mutka_str_free(&elem->data);
+    }
+
+    free(packet->elements);
+    packet->elements = NULL;
+}
+
+static bool p_mutka_packet_add_bytes(struct mutka_raw_packet* packet, const char* bytes, size_t size) {
     if((packet->size + size) >= packet->memsize) {
         return false;
     }
@@ -64,6 +87,9 @@ bool mutka_rpacket_add_ent
     }
 
 
+    printf("%s: Add entry (data = %p, data_size = %li)\n",
+            __func__, data, data_size);
+
     if(encoding_option == RPACKET_ENCODE_BASE64) {
         mutka_str_alloc(&data_encoded);
         if(!mutka_openssl_BASE64_encode(&data_encoded, data, data_size)) {
@@ -75,34 +101,34 @@ bool mutka_rpacket_add_ent
 
     // Format: ... label:<encoding_option>data| ...
 
-    if(!mutka_packet_add_bytes(packet, label, strlen(label))) { 
+    if(!p_mutka_packet_add_bytes(packet, label, strlen(label))) { 
         packet->has_write_error = true;
         goto out;
     }
-    if(!mutka_packet_add_bytes(packet, ":", 1)) { 
+    if(!p_mutka_packet_add_bytes(packet, ":", 1)) { 
         packet->has_write_error = true;
         goto out;
     }
 
-    if(!mutka_packet_add_bytes(packet, (char*)&encoding_option, sizeof(encoding_option))) {
+    if(!p_mutka_packet_add_bytes(packet, (char*)&encoding_option, sizeof(encoding_option))) {
         packet->has_write_error = true;
         goto out;
     }
    
     if(encoding_option != RPACKET_ENCODE_NONE) {
-        if(!mutka_packet_add_bytes(packet, data_encoded.bytes, data_encoded.size)) { 
+        if(!p_mutka_packet_add_bytes(packet, data_encoded.bytes, data_encoded.size)) { 
             packet->has_write_error = true;
             goto out;
         }
     }
     else {
-        if(!mutka_packet_add_bytes(packet, data, data_size)) { 
+        if(!p_mutka_packet_add_bytes(packet, data, data_size)) { 
             packet->has_write_error = true;
             goto out;
         }
     }
     
-    if(!mutka_packet_add_bytes(packet, "|", 1)) { 
+    if(!p_mutka_packet_add_bytes(packet, "|", 1)) { 
         packet->has_write_error = true;
         goto out;
     }
@@ -151,77 +177,39 @@ void mutka_send_rpacket(int socket_fd, struct mutka_raw_packet* packet) {
 }
 
 
-void mutka_free_packet(struct mutka_packet* packet) {
-    if(!packet->elements) {
-        return;
-    }
-
-    for(size_t i = 0; i < packet->num_elements; i++) {
-        struct mutka_packet_elem* elem = &packet->elements[i];
-        mutka_str_free(&elem->label);
-        mutka_str_free(&elem->data);
-    }
-
-    free(packet->elements);
-    packet->elements = NULL;
-}
-
-
-
-#define MUTKA_PACKET_MADD_ELEMS 16
-
 // Allocate more space for packet 'elements' if needed.
-static bool mutka_packet_memcheck(struct mutka_packet* packet) { 
-    if(!packet->elements) {
-        packet->elements = malloc(MUTKA_PACKET_MADD_ELEMS * sizeof *packet->elements);
-        if(!packet->elements) {
-            // TODO: handle memory errors.
-            return false;
-        }
+static bool p_mutka_packet_memcheck(struct mutka_packet* packet) { 
+    bool result = false;
+    size_t old_num_elems_alloc = packet->num_elems_allocated;
 
-        packet->num_elems_allocated = MUTKA_PACKET_MADD_ELEMS;
-        for(uint32_t i = 0; i < packet->num_elems_allocated; i++) {
-            packet->elements[i].label.bytes = NULL;
-            packet->elements[i].data.bytes = NULL;
-        }
-        return true;
+    packet->elements = mutka_srealloc_array(
+            sizeof(*packet->elements), 
+            packet->elements,
+            &packet->num_elems_allocated,
+            packet->num_elems_allocated + 1);
+
+    if(old_num_elems_alloc == packet->num_elems_allocated) {
+        goto out;
     }
 
-    if(packet->num_elements+1 < packet->num_elems_allocated) {
-        return true;
-    }
-
-    const uint32_t prev_num_elems = packet->num_elems_allocated;
-
-    packet->num_elems_allocated += MUTKA_PACKET_MADD_ELEMS;
-    struct mutka_packet_elem* new_ptr = realloc(packet->elements, packet->num_elems_allocated);
-    if(!new_ptr) {
-        // TODO: handle memory errors.
-        return false;
-    }
-    
-    packet->elements = new_ptr;
-
-    for(uint32_t i = prev_num_elems; i < packet->num_elems_allocated; i++) {
+    for(size_t i = old_num_elems_alloc; i < packet->num_elems_allocated; i++) {
         packet->elements[i].label.bytes = NULL;
         packet->elements[i].data.bytes = NULL;
     }
 
-    return true;
+    result = true;
+out:
+    return result;
 }
 
 void mutka_clear_packet(struct mutka_packet* packet) {
-    if(!packet->elements) {
-        return;
+    if(packet->elements) {
+        for(uint32_t i = 0; i < packet->num_elements; i++) {
+            struct mutka_packet_elem* elem = &packet->elements[i];
+            mutka_str_clear(&elem->label);
+            mutka_str_clear(&elem->data);
+        }
     }    
-
-    //printf("%s: %i\n", __func__, packet->num_elements);
-
-    for(uint32_t i = 0; i < packet->num_elements; i++) {
-        struct mutka_packet_elem* elem = &packet->elements[i];
-        mutka_str_clear(&elem->label);
-        mutka_str_clear(&elem->data);
-    }
 
     packet->expected_size = 0;
     packet->num_elements = 0;
@@ -266,10 +254,12 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
         return false;
     }
     
+#ifdef DEBUG
+    printf("packet->expected_size = %i, raw_packet->size = %i\n", packet->expected_size, raw_packet->size);
+    printf("packet->num_elements = %li\n", packet->num_elements);
+#endif
 
-    printf("EXPECTED = %i, RECV = %i\n", packet->expected_size, raw_packet->size);
-
-    if(!mutka_packet_memcheck(packet)) {
+    if(!p_mutka_packet_memcheck(packet)) {
         return false;
     }
 
@@ -303,7 +293,7 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
         // Read element data:
         while(ch < lastch) {
             if(*ch == '|') { // Element separator.
-                if(!mutka_packet_memcheck(packet)) {
+                if(!p_mutka_packet_memcheck(packet)) {
                     return false;
                 }
                 packet->num_elements++;
@@ -315,10 +305,13 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
             mutka_str_pushbyte(&curr_elem->data, *ch);
             ch++;
         }
+
+        printf("packet->num_elems = %li | packet->num_elems_alloc = %li\n",
+                packet->num_elements, packet->num_elems_allocated);
+        
         if(curr_elem->encoding == RPACKET_ENCODE_NONE) {
             mutka_str_pushbyte(&curr_elem->data, 0);
         }
-        
     }
 
     printf("PACKET PARSED OK!\n");

@@ -15,19 +15,19 @@
 static struct client_global {
     
     pthread_t recv_thread;
-
 }
 global;
 
 
 void* mutka_client_recv_thread(void* arg);
+
 void mutka_client_handle_packet(struct mutka_client* client);
 
 
 #include <stdio.h>
 
 
-static bool mutka_add_config_file
+static bool p_mutka_add_config_file
 (
     struct mutka_str* cfg_root,
     struct mutka_str* cfg_root_tmp,
@@ -57,7 +57,7 @@ static bool mutka_add_config_file
     return true;
 }
 
-static bool mutka_add_config_dir
+static bool p_mutka_add_config_dir
 (
     struct mutka_str* cfg_root,
     struct mutka_str* cfg_root_tmp,
@@ -76,13 +76,11 @@ static bool mutka_add_config_dir
         mutka_set_errmsg("Error while creating config path. '%s' is too long.", cfg_root_tmp->bytes);
         return false;
     }
-
     
     if(!mutka_dir_exists(cfg_root_tmp->bytes)) {
         mutka_mkdir_p(cfg_root_tmp->bytes, S_IRWXU);
     }
     
-
     memcpy(output, cfg_root_tmp->bytes, cfg_root_tmp->size);
     return true;
 }
@@ -91,10 +89,16 @@ static bool mutka_add_config_dir
 bool mutka_validate_client_cfg(struct mutka_client_cfg* config, char* nickname) {
     bool result = false;
 
-    if(!config->add_new_trusted_host_callback) {
-        mutka_set_errmsg("\"add_new_trusted_host_callback\" is missing.");
+    if(!config->accept_new_trusted_host_callback) {
+        mutka_set_errmsg("\"accept_new_trusted_host_callback\" is missing.");
         goto out;
     }
+
+    if(!config->accept_host_public_key_change_callback) {
+        mutka_set_errmsg("\"accept_host_public_key_change_callback\" is missing.");
+        goto out;
+    }
+
 
 
     size_t nickname_len = strlen(nickname);
@@ -195,21 +199,21 @@ bool mutka_validate_client_cfg(struct mutka_client_cfg* config, char* nickname) 
     mutka_str_move(&cfg_root_tmp, cfg_root.bytes, cfg_root.size);
 
 
-    if(!mutka_add_config_dir(&cfg_root, &cfg_root_tmp, config->trusted_peers_dir, "trusted_peers")) {
+    if(!p_mutka_add_config_dir(&cfg_root, &cfg_root_tmp, config->trusted_peers_dir, "trusted_peers")) {
         goto free_and_out;
     }
 
-    if(!mutka_add_config_file(&cfg_root, &cfg_root_tmp, config->trusted_privkey_path,
+    if(!p_mutka_add_config_file(&cfg_root, &cfg_root_tmp, config->trusted_privkey_path,
                 nickname, nickname_len, ".private_key")) {
         goto free_and_out;
     }
     
-    if(!mutka_add_config_file(&cfg_root, &cfg_root_tmp, config->trusted_publkey_path,
+    if(!p_mutka_add_config_file(&cfg_root, &cfg_root_tmp, config->trusted_publkey_path,
                 nickname, nickname_len, ".public_key")) {
         goto free_and_out;
     }
     
-    if(!mutka_add_config_file(&cfg_root, &cfg_root_tmp, config->trusted_hosts_path,
+    if(!p_mutka_add_config_file(&cfg_root, &cfg_root_tmp, config->trusted_hosts_path,
                 nickname, nickname_len, ".trusted_hosts")) {
         goto free_and_out;
     }
@@ -232,20 +236,12 @@ out:
 
 bool mutka_cfg_trustedkeys_exists(struct mutka_client_cfg* config) {
 
-    size_t publkey_file_size = 0;
-    size_t privkey_file_size = 0;
-
-    if(mutka_file_exists(config->trusted_publkey_path)) {
-        mutka_map_file(config->trusted_publkey_path, NULL, &publkey_file_size);
-    }
-
-    if(mutka_file_exists(config->trusted_privkey_path)) {
-        mutka_map_file(config->trusted_privkey_path, NULL, &privkey_file_size);
-    }
+    size_t publkey_file_size = mutka_file_size(config->trusted_publkey_path);
+    size_t privkey_file_size = mutka_file_size(config->trusted_privkey_path);
 
     // The private key is encrypted so
     // it should have more bytes than just 'key length'
-    return (publkey_file_size >= ED25519_KEYLEN) && (privkey_file_size > ED25519_KEYLEN);
+    return (publkey_file_size == ED25519_KEYLEN) && (privkey_file_size > ED25519_KEYLEN);
 }
 
 bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
@@ -343,6 +339,7 @@ bool mutka_cfg_generate_trustedkeys(struct mutka_client_cfg* config,
     mutka_file_clear(config->trusted_privkey_path);
 
 
+    // Temporary stuff...
     
     if(!mutka_file_append(config->trusted_privkey_path, scrypt_salt, sizeof(scrypt_salt))) {
         mutka_set_errmsg("Failed to save trusted private key's scrypt salt.");
@@ -404,7 +401,7 @@ bool mutka_read_trusted_publkey(struct mutka_client_cfg* config) {
     char* publkey_file = NULL;
     size_t publkey_file_size = 0;
 
-    if(!mutka_map_file(config->trusted_publkey_path, &publkey_file, &publkey_file_size)) {
+    if(!mutka_map_file(config->trusted_publkey_path, PROT_READ, &publkey_file, &publkey_file_size)) {
         goto out;
     }
     if(publkey_file_size == 0) {
@@ -440,7 +437,7 @@ bool mutka_decrypt_trusted_privkey
     char* privkey_file = NULL;
     size_t privkey_file_size = 0;
 
-    if(!mutka_map_file(config->trusted_privkey_path, &privkey_file, &privkey_file_size)) {
+    if(!mutka_map_file(config->trusted_privkey_path, PROT_READ, &privkey_file, &privkey_file_size)) {
         goto out;
     }
 
@@ -609,6 +606,7 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, 
     client = malloc(sizeof *client);
     client->env = MUTKA_ENV_NULL;
     client->config = *config;
+    client->flags = 0;
     pthread_mutex_init(&client->mutex, NULL);
 
     // Copy host address for future use.
@@ -663,19 +661,18 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, 
     client->env = MUTKA_ENV_CLIENT;
 
     // Initialize client structure.
-    client->inpacket.elements = NULL;
-    client->inpacket.num_elements = 0;
+    //client->inpacket.elements = NULL;
+    //client->inpacket.num_elements = 0;
+    mutka_inpacket_init(&client->inpacket);
     mutka_alloc_rpacket(&client->out_raw_packet, MUTKA_RAW_PACKET_DEFMEMSIZE);
     mutka_alloc_rpacket(&client->inpacket.raw_packet, MUTKA_RAW_PACKET_DEFMEMSIZE);
 
-    client->handshake_complete = false;
     client->metadata_keys = mutka_init_keypair();
     mutka_str_alloc(&client->peer_metadata_publkey);
-
+    mutka_str_alloc(&client->host_public_key);
     // Create thread for receiving data.
-    pthread_create(&global.recv_thread, NULL, mutka_client_recv_thread, client);
-  
-    mutka_init_metadata_key_exchange(client);
+    pthread_create(&global.recv_thread,
+            NULL, mutka_client_recv_thread, client);
 
 out:
     return client;
@@ -685,17 +682,27 @@ out:
 void mutka_init_metadata_key_exchange(struct mutka_client* client) {
     mutka_openssl_X25519_keypair(&client->metadata_keys);
 
+    RAND_bytes((uint8_t*)client->client_nonce, sizeof(client->client_nonce));
+
+
     mutka_dump_strbytes(&client->metadata_keys.public_key, "my metadata publkey");
     
     // Initiate handshake by sending generated metadata public key.
     // see packet.h for more information about metadata keys.
     mutka_rpacket_prep(&client->out_raw_packet, MPACKET_EXCHANGE_METADATA_KEYS);
+    
     mutka_rpacket_add_ent(&client->out_raw_packet, 
-            "metadata_publkey", 
+            "metadata publkey", 
             client->metadata_keys.public_key.bytes, 
             client->metadata_keys.public_key.size,
             RPACKET_ENCODE_BASE64);
-    
+ 
+    mutka_rpacket_add_ent(&client->out_raw_packet,
+            "client nonce",
+            client->client_nonce,
+            sizeof(client->client_nonce),
+            RPACKET_ENCODE_BASE64);   
+
     mutka_send_rpacket(client->socket_fd, &client->out_raw_packet);
 }
 
@@ -726,6 +733,7 @@ void mutka_disconnect(struct mutka_client* client) {
     mutka_str_free(&client->peer_metadata_publkey);
 
     if(client->env == MUTKA_ENV_CLIENT) {
+        mutka_str_free(&client->host_public_key);
         mutka_free_rpacket(&client->out_raw_packet);
         mutka_free_packet(&client->inpacket);
         free(client);
@@ -735,11 +743,13 @@ void mutka_disconnect(struct mutka_client* client) {
 
 #include <stdio.h> // <- temp
 
+
 void* mutka_client_recv_thread(void* arg) {
     printf("%s: started\n",__func__);
 
     struct mutka_client* client = (struct mutka_client*)arg;
-    while(true) {
+    bool running = true;
+    while(running) {
         pthread_mutex_lock(&client->mutex);
 
         int rd = mutka_recv_incoming_packet(&client->inpacket, client->socket_fd);
@@ -757,6 +767,10 @@ void* mutka_client_recv_thread(void* arg) {
             printf("M_PACKET_PARSE_ERR\n");
         }
 
+        if((client->flags & MUTKA_CLFLG_SHOULD_DISCONNECT)) {
+            running = false;
+        }
+
         pthread_mutex_unlock(&client->mutex);
         mutka_sleep_ms(1); // Small delay to limit CPU usage.
     }
@@ -765,7 +779,7 @@ void* mutka_client_recv_thread(void* arg) {
 }
 
 
-static bool mutka_client_save_host_public_key
+static bool p_mutka_client_save_host_public_key
 (
     struct mutka_client* client,
     struct mutka_str* public_key,
@@ -774,7 +788,7 @@ static bool mutka_client_save_host_public_key
     bool result = false;
 
     // We should first ask to save it or not.
-    bool can_add = client->config.add_new_trusted_host_callback(client, &client->inpacket.elements[0].data);
+    bool can_add = client->config.accept_new_trusted_host_callback(client, public_key);
    
     if(!can_add) {
         goto out;
@@ -785,7 +799,7 @@ static bool mutka_client_save_host_public_key
             host_tag,
             public_key->bytes);
 
-    printf("%s: %s\n", __func__, buffer);
+    //printf("%s: %s\n", __func__, buffer);
 
     if(!mutka_file_append(client->config.trusted_hosts_path, buffer, buffer_len)) {
         mutka_set_errmsg("Failed to save trusted host to \"%s\"", client->config.trusted_hosts_path);
@@ -798,13 +812,54 @@ out:
     return result;
 }
 
+static bool p_mutka_client_overwrite_host_key
+(
+    char* trusted_hosts_file,
+    size_t trusted_hosts_file_size,
+    size_t host_index,
+    struct mutka_str* recv_host_publkey
+){
+    bool result = false;
+
+    // The host public key's length should be checked before entering this function
+    // but just to be safe check again.
+
+    const uint32_t decoded_key_len = mutka_get_base64_decoded_length(recv_host_publkey->size); 
+    if(decoded_key_len != ED25519_KEYLEN) {
+        mutka_set_errmsg("%s: Received host key doesnt match expected length.", __func__);
+        goto out;
+    }
+
+    // Now it should be safe to just write over the old key same amount of bytes.
+    for(size_t i = host_index; i < trusted_hosts_file_size; i++) {
+        const size_t publkey_idx = i - host_index;
+        if(publkey_idx >= recv_host_publkey->size) {
+            break;
+        }
+
+        trusted_hosts_file[i] = recv_host_publkey->bytes[publkey_idx];
+    } 
+
+    // Sync file to avoid undefined reads in the future.
+    msync(trusted_hosts_file, trusted_hosts_file_size, MS_SYNC);
+   
+    result = true;
+out:
+    return result;
+}
+
 // Process received host ed25519 public key.
-static bool mutka_client_process_recv_host_key(struct mutka_client* client) {
+static bool p_mutka_client_process_recv_host_key(struct mutka_client* client) {
     bool result = false;
 
     struct mutka_str* recv_host_publkey = &client->inpacket.elements[0].data;
     printf("(%i) recv host ed25519 public key: %s\n", recv_host_publkey->size, recv_host_publkey->bytes);
 
+    const uint32_t decoded_key_len = mutka_get_base64_decoded_length(recv_host_publkey->size); 
+    if(decoded_key_len != ED25519_KEYLEN) {
+        mutka_set_errmsg("%s: Received host key doesnt match expected length.", __func__);
+        goto out;
+    }
 
     // "host_addr#host_port:"
     char host_tag[128] = { 0 };
@@ -814,7 +869,9 @@ static bool mutka_client_process_recv_host_key(struct mutka_client* client) {
     char* trusted_hosts_file = NULL;
     size_t trusted_hosts_file_size = 0;
 
-    if(!mutka_map_file(client->config.trusted_hosts_path, &trusted_hosts_file, &trusted_hosts_file_size)) {
+    if(!mutka_map_file(client->config.trusted_hosts_path, 
+                PROT_READ | PROT_WRITE,
+                &trusted_hosts_file, &trusted_hosts_file_size)) {
         goto out;
     }
 
@@ -827,34 +884,60 @@ static bool mutka_client_process_recv_host_key(struct mutka_client* client) {
 
     if(host_index < 0) {
         // 'host_tag' was not found.
-        if(!mutka_client_save_host_public_key(client, recv_host_publkey, host_tag)) {
+        if(!p_mutka_client_save_host_public_key(client, recv_host_publkey, host_tag)) {
             goto unmap_and_out;
         }
     }
     else {
         // Key should exist, compare it to expected value.
+        // Do some sanity check before comparing the key,
+        // we do not want false warnings if there is an error in the code.
 
         host_index += host_tag_len;
 
-        if(host_index >= trusted_hosts_file_size) {
-            mutka_set_errmsg("Something went wrong when tried to find saved host public key from file. "
-                    "(host_index >= trusted_hosts_file_size)");
+        if((host_index + recv_host_publkey->size) > (ssize_t)trusted_hosts_file_size) {
+            mutka_set_errmsg("Failed to get correct index for \"host_tag\", "
+                    "(host_index + recv_host_publkey->size) > trusted_hosts_file_size");
             goto unmap_and_out;
         }
 
+
+        bool key_match = true;
         for(size_t i = host_index; i < trusted_hosts_file_size; i++) {
 
-            const char expected_publkey_byte = recv_host_publkey->bytes[i - host_index];
+            const size_t publkey_idx = i - host_index;
+            if(publkey_idx >= recv_host_publkey->size) {
+                break;
+            }
+
+            const char recv_publkey_byte = recv_host_publkey->bytes[publkey_idx];
             const char saved_publkey_byte = trusted_hosts_file[i];
 
-            if(expected_publkey_byte != saved_publkey_byte) {
-                fprintf(stderr, "\033[31m\033[1m WARNING: HOST SIGNATURE KEYS HAVE CHANGED!\033[0m\n");
+            if(recv_publkey_byte != saved_publkey_byte) {
+                key_match = false;
+                break;
+            }
+        }
+
+        if(!key_match) {
+            if(!client->config.accept_host_public_key_change_callback(client, recv_host_publkey)) {
+                goto unmap_and_out;
+            }
+
+            if(!p_mutka_client_overwrite_host_key
+                (trusted_hosts_file, trusted_hosts_file_size, host_index, recv_host_publkey)) {
                 goto unmap_and_out;
             }
         }
-        printf("\033[32mHost key matched\033[0m\n");
-
+        else {
+            printf("\033[32mHost key matched\033[0m\n");
+        }
     }
+
+
+    mutka_openssl_BASE64_decode(&client->host_public_key, 
+            recv_host_publkey->bytes,
+            recv_host_publkey->size);
 
     result = true;
 
@@ -883,29 +966,48 @@ void mutka_client_handle_packet(struct mutka_client* client) {
                 return;
             }
 
-            mutka_client_process_recv_host_key(client);
+            if(!p_mutka_client_process_recv_host_key(client)) {
+                mutka_set_errmsg("Failed to process received host public key.");
+                client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
+                return;
+            }
+                
+            mutka_init_metadata_key_exchange(client);
             return;
 
         case MPACKET_EXCHANGE_METADATA_KEYS:
-            if(client->handshake_complete) {
-                // TODO: REMOVE THIS
-                mutka_set_errmsg("Handshake has already been complete.");
+            if(client->inpacket.num_elements != 2) {
+                mutka_set_errmsg("Failed to receive complete handshake packet.");
                 return;
             }
 
-            if(client->inpacket.num_elements != 1) {
-                mutka_set_errmsg("Failed to receive handshake packet.");
-                return;
-            }
+            struct mutka_packet_elem* key_elem = &client->inpacket.elements[0];
+            struct mutka_packet_elem* sig_elem = &client->inpacket.elements[1];
+
+            struct mutka_str signature;
+            mutka_str_alloc(&signature);
 
             mutka_openssl_BASE64_decode(
                     &client->peer_metadata_publkey,
-                    client->inpacket.elements[0].data.bytes,
-                    client->inpacket.elements[0].data.size);
+                    key_elem->data.bytes,
+                    key_elem->data.size);
+
+            mutka_openssl_BASE64_decode(
+                    &signature,
+                    sig_elem->data.bytes,
+                    sig_elem->data.size);
 
             mutka_dump_strbytes(&client->peer_metadata_publkey, "peer metadata publkey");
+            mutka_dump_strbytes(&signature, "signature");
 
-            client->handshake_complete = true;
+            if(!mutka_openssl_ED25519_verify(
+                        &client->host_public_key, &signature,
+                        client->client_nonce, sizeof(client->client_nonce))) {
+                mutka_set_errmsg("WARNING: FAILED TO VERIFY HOST SIGNATURE!");
+                client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
+            }
+
+            mutka_str_free(&signature);
             return;
     }
 

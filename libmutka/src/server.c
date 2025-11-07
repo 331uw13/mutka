@@ -26,14 +26,14 @@ global;
 
 #include <stdio.h>
 
-static void lock_server_mutex_ifneed(struct mutka_server* server) {
+static void p_lock_server_mutex_ifneed(struct mutka_server* server) {
     pthread_t self = pthread_self();
     if(self != global.recv_thread) {
         pthread_mutex_lock(&server->mutex);
     }
 }
 
-static void unlock_server_mutex_ifneed(struct mutka_server* server) {
+static void p_unlock_server_mutex_ifneed(struct mutka_server* server) {
     pthread_t self = pthread_self();
     if(self != global.recv_thread) {
         pthread_mutex_unlock(&server->mutex);
@@ -46,7 +46,7 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
 
 
 
-static bool mutka_server_save_host_key
+static bool p_mutka_server_save_host_key
 (
     const char* path,
     const char* header_tag,
@@ -70,7 +70,7 @@ static bool mutka_server_save_host_key
     return true;
 }
 
-static bool mutka_server_validate_keyfile
+static bool p_mutka_server_validate_keyfile
 (
     char* file_data,
     const char* expected_header_tag,
@@ -86,7 +86,7 @@ static bool mutka_server_validate_keyfile
     return true;
 }
 
-static bool mutka_server_generate_host_keys
+static bool p_mutka_server_generate_host_keys
 (
     struct mutka_server* server,
     const char* publkey_path,
@@ -105,13 +105,13 @@ static bool mutka_server_generate_host_keys
         remove(privkey_path);
     }
 
-    if(!mutka_server_save_host_key(publkey_path, 
+    if(!p_mutka_server_save_host_key(publkey_path, 
                 HOST_ED25519_PUBLKEY_HEADER_TAG, 
                 &server->host_ed25519.public_key)) {
         return false;
     }
 
-    if(!mutka_server_save_host_key(privkey_path, 
+    if(!p_mutka_server_save_host_key(privkey_path, 
                 HOST_ED25519_PRIVKEY_HEADER_TAG, 
                 &server->host_ed25519.private_key)) {
         return false;
@@ -123,7 +123,7 @@ static bool mutka_server_generate_host_keys
     return true;
 }
 
-static bool mutka_server_read_host_keys
+static bool p_mutka_server_read_host_keys
 (
     struct mutka_server* server,
     const char* publkey_path,
@@ -157,21 +157,21 @@ static bool mutka_server_read_host_keys
     char* privkey_file = NULL;
     size_t privkey_file_size = 0;
     
-    if(!mutka_map_file(publkey_path, &publkey_file, &publkey_file_size)) {
+    if(!mutka_map_file(publkey_path, PROT_READ, &publkey_file, &publkey_file_size)) {
         goto out;
     }
  
-    if(!mutka_map_file(privkey_path, &privkey_file, &privkey_file_size)) {
+    if(!mutka_map_file(privkey_path, PROT_READ, &privkey_file, &privkey_file_size)) {
         goto unmap_and_out;
     }
     
-    if(!mutka_server_validate_keyfile(publkey_file, 
+    if(!p_mutka_server_validate_keyfile(publkey_file, 
                 HOST_ED25519_PUBLKEY_HEADER_TAG, publkey_expected_header_len)) {
         mutka_set_errmsg("Host ed25519 PUBLIC key file header doesnt match expected value.");
         goto unmap_and_out;
     }
 
-    if(!mutka_server_validate_keyfile(privkey_file, 
+    if(!p_mutka_server_validate_keyfile(privkey_file, 
                 HOST_ED25519_PRIVKEY_HEADER_TAG, privkey_expected_header_len)) {
         mutka_set_errmsg("Host ed25519 PRIVATE key file header doesnt match expected value.");
         goto unmap_and_out;
@@ -213,7 +213,7 @@ struct mutka_server* mutka_create_server
     struct mutka_server* server = malloc(sizeof *server);
     server->host_ed25519 = mutka_init_keypair();
 
-    if(!mutka_server_read_host_keys(server, publkey_path, privkey_path)) {
+    if(!p_mutka_server_read_host_keys(server, publkey_path, privkey_path)) {
        
         if(!config.accept_host_keygen_callback()) {
             mutka_set_errmsg("Host ed25519 key generation was cancelled.");
@@ -225,7 +225,7 @@ struct mutka_server* mutka_create_server
 
         // Host keys dont exists or they are not valid
         // Try to generate and save new pair.
-        if(!mutka_server_generate_host_keys(server, publkey_path, privkey_path)) {
+        if(!p_mutka_server_generate_host_keys(server, publkey_path, privkey_path)) {
             mutka_set_errmsg("Failed to generate new host keys");
             mutka_free_keypair(&server->host_ed25519);
             free(server);
@@ -283,8 +283,7 @@ struct mutka_server* mutka_create_server
 
     srand(time(NULL));
 
-    server->inpacket.elements = NULL;
-    server->inpacket.num_elements = 0;
+    mutka_inpacket_init(&server->inpacket);
     mutka_alloc_rpacket(&server->out_raw_packet, MUTKA_RAW_PACKET_DEFMEMSIZE);
     mutka_alloc_rpacket(&server->inpacket.raw_packet, MUTKA_RAW_PACKET_DEFMEMSIZE);
 
@@ -332,7 +331,7 @@ void mutka_close_server(struct mutka_server* server) {
 
 
 void mutka_server_remove_client(struct mutka_server* server, struct mutka_client* client) {
-    lock_server_mutex_ifneed(server);
+    p_lock_server_mutex_ifneed(server);
 
     int remove_index = -1;
 
@@ -352,10 +351,10 @@ void mutka_server_remove_client(struct mutka_server* server, struct mutka_client
         }
     }
 
-    unlock_server_mutex_ifneed(server);
+    p_unlock_server_mutex_ifneed(server);
 }
 
-static void mutka_server_make_client_uid(struct mutka_server* server, struct mutka_client* client) {
+static void p_mutka_server_make_client_uid(struct mutka_server* server, struct mutka_client* client) {
     bool client_has_unique_id = true;
     while(true) {
         for(uint32_t i = 0; i < server->num_clients; i++) {
@@ -377,7 +376,7 @@ static void mutka_server_handle_client_connect(struct mutka_server* server, stru
     client->env = MUTKA_ENV_SERVER;
     client->uid = rand();
 
-    mutka_server_make_client_uid(server, client);
+    p_mutka_server_make_client_uid(server, client);
 
     client->metadata_keys = mutka_init_keypair();
     mutka_str_alloc(&client->peer_metadata_publkey);
@@ -471,20 +470,40 @@ void* mutka_server_recvdata_thread_func(void* arg) {
 void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client* client) {
     // NOTE: server->mutex is locked here.
 
-    printf("Handling MPACKET_HANDSHAKE, elements: %i\n", server->inpacket.num_elements);
+    printf("Handling packet, num_elements = %li\n", server->inpacket.num_elements);
 
     switch(server->inpacket.id) {
         case MPACKET_EXCHANGE_METADATA_KEYS:
-            if(server->inpacket.num_elements == 0) {
+            if(server->inpacket.num_elements != 2) {
                 return;
             }
 
+            struct mutka_str signature;
+            struct mutka_str decoded_client_nonce;
+            mutka_str_alloc(&decoded_client_nonce);
+            mutka_str_alloc(&signature);
 
             // First save the received peer metadata public key.
             struct mutka_packet_elem* key_elem = &server->inpacket.elements[0];
             mutka_openssl_BASE64_decode(&client->peer_metadata_publkey,
                     key_elem->data.bytes,
                     key_elem->data.size);
+
+            struct mutka_packet_elem* nonce_elem = &server->inpacket.elements[1];
+            mutka_openssl_BASE64_decode(&decoded_client_nonce,
+                    nonce_elem->data.bytes,
+                    nonce_elem->data.size);
+
+            if(!mutka_openssl_ED25519_sign(&signature,
+                        &server->host_ed25519.private_key,
+                        decoded_client_nonce.bytes,
+                        decoded_client_nonce.size)) {
+                mutka_set_errmsg("%s: Failed create signature. (MPACKET_EXCHANGE_METADATA_KEYS)", __func__);
+                mutka_str_free(&signature);
+                mutka_str_free(&decoded_client_nonce);
+                return;
+            }
+
 
             // Generate X25519 keypair for the client which will be stored on the server.
             // See packet.h for more information about metadata keys.
@@ -500,7 +519,17 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
                     client->metadata_keys.public_key.bytes,
                     client->metadata_keys.public_key.size,
                     RPACKET_ENCODE_BASE64);
-            
+
+            mutka_dump_strbytes(&signature, "signature");
+            mutka_rpacket_add_ent(&server->out_raw_packet,
+                    "signature",
+                    signature.bytes,
+                    signature.size,
+                    RPACKET_ENCODE_BASE64);
+
+
+            mutka_str_free(&signature);
+            mutka_str_free(&decoded_client_nonce);
             mutka_send_rpacket(client->socket_fd, &server->out_raw_packet);
             return;
     }

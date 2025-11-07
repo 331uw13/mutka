@@ -21,6 +21,10 @@
 #define MUTKA_CCFG_HAS_TRUSTED_PRIVKEY (1 << 1)
 
 
+// mutka_client flags
+#define MUTKA_CLFLG_SHOULD_DISCONNECT (1 << 0)
+
+
 struct mutka_client;
 
 struct mutka_client_cfg {
@@ -43,8 +47,16 @@ struct mutka_client_cfg {
     // When client connects to server for the first time
     // or doesnt have the server host ed25519 public key in trusted_hosts file.
     // This callback can return 'true' if it allows it to be added, 
-    // If 'false' is returned client is going to be disconnected.
-    bool(*add_new_trusted_host_callback)(struct mutka_client*, struct mutka_str* /*host public key*/);
+    // If 'false' is returned MUTKA_CLFLG_SHOULD_DISCONNECT is set.
+    bool(*accept_new_trusted_host_callback)
+        (struct mutka_client*, struct mutka_str* /*recv host public key*/);
+
+    // If client receives a different host ed25519 public key than it has saved in trusted_hosts file.
+    // A clear warning must be made and ask if allow to overwrite the existing key.
+    // This callback can return 'true' to accept the key to be overwritten (may be risky!)
+    // and if 'false' is returned (no overwrite allowed), then MUTKA_CLFLG_SHOULD_DISCONNECT is set.
+    bool(*accept_host_public_key_change_callback)
+        (struct mutka_client*, struct mutka_str* /*recv host public key*/);
 
     int flags;
 };
@@ -70,15 +82,17 @@ struct mutka_client {
     char      host_port[MUTKA_HOST_PORT_MAX];
     uint32_t  host_port_len;
 
+    char      client_nonce[16];
+
+    struct mutka_str         host_public_key;
     struct mutka_keypair     metadata_keys;
     struct mutka_raw_packet  out_raw_packet;
     struct mutka_packet      inpacket; // Last received parsed packet.
     
     void(*packet_received_callback)(struct mutka_client*);
-    
-    /*TODO REMOVE THIS*/bool handshake_complete;
-
     struct mutka_client_cfg config;
+
+    int flags;
 };
 
 

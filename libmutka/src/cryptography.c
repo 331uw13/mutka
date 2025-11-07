@@ -5,12 +5,12 @@
 #include <openssl/ec.h>
 #include <openssl/pem.h>
 #include <openssl/rand.h>
+#include <math.h>
 
 #include "../include/cryptography.h"
 #include "../include/mutka.h"
 
 
-//#include <stdio.h>
 
 static void openssl_error_ext(const char* file, const char* func, int line) {
     char buffer[256] = { 0 };
@@ -330,6 +330,110 @@ out:
     return result;
 }
 
+
+
+bool mutka_openssl_ED25519_sign
+(
+    struct mutka_str* output,
+    struct mutka_str* private_key,
+    char* data, size_t data_size
+){
+    bool result = false;
+    EVP_MD_CTX* ctx = NULL;
+    EVP_PKEY* pkey = NULL;
+    size_t signature_len = 0;
+
+    ctx = EVP_MD_CTX_new();
+    if(!ctx) {
+        goto out;
+    }
+
+    pkey = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, NULL, (const uint8_t*)private_key->bytes, private_key->size);
+    if(!pkey) {
+        openssl_error();
+        goto out;
+    }
+
+    if(!EVP_DigestSignInit_ex(ctx, NULL, NULL, NULL, NULL, pkey, NULL)) {
+        goto out;
+    }
+
+
+    // Get signature length first.
+    EVP_DigestSign(ctx, NULL, &signature_len, (const uint8_t*)data, data_size);
+    if(signature_len == 0) {
+        openssl_error();
+        goto out;
+    }
+
+    mutka_str_reserve(output, signature_len);
+    EVP_DigestSign(ctx, (uint8_t*)output->bytes, &signature_len, (const uint8_t*)data, data_size);
+
+    output->size = signature_len;
+    result = true;
+
+out:
+    if(ctx) {
+        EVP_MD_CTX_free(ctx);
+    }
+    if(pkey) {
+        EVP_PKEY_free(pkey);
+    }
+
+    return result;
+}
+
+
+bool mutka_openssl_ED25519_verify
+(
+    struct mutka_str* public_key,
+    struct mutka_str* signature,
+    char* data, size_t data_size
+){
+    bool result = false;
+    EVP_MD_CTX* ctx = NULL;
+    EVP_PKEY* pkey = NULL;
+
+    ctx = EVP_MD_CTX_new();
+    if(!ctx) {
+        goto out;
+    }
+
+    pkey = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, NULL, (const uint8_t*)public_key->bytes, public_key->size);
+    if(!pkey) {
+        openssl_error();
+        goto out;
+    }
+
+    if(!EVP_DigestVerifyInit(ctx, NULL, NULL, NULL, pkey)) {
+        goto out;
+    }
+
+    result = (EVP_DigestVerify(ctx,
+            (uint8_t*)signature->bytes, signature->size,
+            (const uint8_t*)data, data_size) == 1);
+
+out:
+    if(ctx) {
+        EVP_MD_CTX_free(ctx);
+    }
+    if(pkey) {
+        EVP_PKEY_free(pkey);
+    }
+
+    return result;
+}
+
+
+uint32_t mutka_get_base64_encoded_length(uint32_t decoded_len) {
+    return (uint32_t)floor(((decoded_len + 2) / 3) * 4);
+}
+
+uint32_t mutka_get_base64_decoded_length(uint32_t encoded_len) {
+    return (uint32_t)floor((encoded_len / 4) * 3 - 1);
+}
+
+
 bool mutka_openssl_BASE64_encode(struct mutka_str* output, char* data, size_t data_size) {
     EVP_ENCODE_CTX* ctx = NULL;
     int output_len = 0;
@@ -345,7 +449,7 @@ bool mutka_openssl_BASE64_encode(struct mutka_str* output, char* data, size_t da
     EVP_EncodeInit(ctx);
 
     mutka_str_clear(output);
-    mutka_str_reserve(output, ((data_size + 2) / 3) * 4 + 1);
+    mutka_str_reserve(output, mutka_get_base64_encoded_length(data_size)+1);
 
     if(!EVP_EncodeUpdate(ctx, (uint8_t*)output->bytes, &output_len, (uint8_t*)data, data_size)) {
         openssl_error();
@@ -353,9 +457,10 @@ bool mutka_openssl_BASE64_encode(struct mutka_str* output, char* data, size_t da
     }
 
     EVP_EncodeFinal(ctx, (uint8_t*)output->bytes + output_len, &tmp_len);
-    output->size += tmp_len;
+    output->size = output_len + tmp_len;
 
     result = true;
+
 
 out:
     if(ctx) {
@@ -364,6 +469,7 @@ out:
 
     return result;
 }
+
 
 
 bool mutka_openssl_BASE64_decode(struct mutka_str* output, char* data, size_t data_size) {
@@ -381,7 +487,7 @@ bool mutka_openssl_BASE64_decode(struct mutka_str* output, char* data, size_t da
     EVP_DecodeInit(ctx);
 
     mutka_str_clear(output);
-    mutka_str_reserve(output, (data_size / 4) * 3 + 1);
+    mutka_str_reserve(output, mutka_get_base64_decoded_length(data_size)+1);
 
     if(EVP_DecodeUpdate(ctx, (uint8_t*)output->bytes, &output_len, (uint8_t*)data, data_size) < 0) {
         openssl_error();

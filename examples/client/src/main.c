@@ -2,111 +2,117 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
+#include <pthread.h>
+
 #include "../../../libmutka/include/mutka.h"
+
 #include "../../../libmutka/include/cryptography.h"
 
-/*
-#include <openssl/rand.h>
+
+// Mutex is used for reading input because the main thread requires input as well.
+// Otherwise both will get the same input...
+static pthread_mutex_t stdin_read_mutex;
 
 
-int main() {
+char read_user_input_yes_or_no() {
+    pthread_mutex_lock(&stdin_read_mutex);
 
+    char input[8] = { 0 };
+    read(STDIN_FILENO, input, sizeof(input));
 
-    char plain_data[] = "Hello AES GCM Mode!";
-    size_t plain_data_size = strlen(plain_data);
+    pthread_mutex_unlock(&stdin_read_mutex);
 
-    printf("%s\n", plain_data);
-   
-    char gcm_key[32] = { 0 };
-    char gcm_iv[16] = { 0 };
-    
-    RAND_bytes((uint8_t*)gcm_key, 32);
-    RAND_bytes((uint8_t*)gcm_iv, 16);
-
-    char* gcm_aad = "asdasdsahg";
-
-    struct mutka_str cipher;
-    struct mutka_str tag;
-    
-    mutka_str_alloc(&cipher);
-    mutka_str_alloc(&tag);
-
-    if(!mutka_openssl_AES256GCM_encrypt(
-                &cipher,
-                &tag,
-                gcm_key,
-                gcm_iv,
-                gcm_aad, strlen(gcm_aad),
-                plain_data, plain_data_size
-                )) {
-        printf("%s\n", mutka_get_errmsg());
-        goto fail;
-    }
-
-
-    mutka_dump_strbytes(&cipher, "cipher");
-
-
-
-    // ---------------------------------------
-
-
-    struct mutka_str plaintext;
-    mutka_str_alloc(&plaintext);
-
-    if(!mutka_openssl_AES256GCM_decrypt(
-                &plaintext,
-                gcm_key,
-                gcm_iv,
-                gcm_aad, strlen(gcm_aad),
-                tag.bytes, tag.size,
-                cipher.bytes, cipher.size
-                )) {
-        printf("Failed to decrypt.\n");
-    }
-    else {
-        printf("%s\n", plaintext.bytes);
-    }
-    
-
-    mutka_str_free(&plaintext);
-
-fail:
-
-    mutka_str_free(&cipher);
-    mutka_str_free(&tag);
-
-
-    return 0;
+    return input[0];
 }
-*/
-
-
 
 void mutka_error(char* buffer, size_t size) {
     (void)size;
     printf("[libmutka error]: %s\n", buffer);
 }
 
-
-
 void packet_received(struct mutka_client* client) {
-   
     printf("\033[32m%s\033[0m\n", __func__);
-
     for(uint32_t i = 0; i < client->inpacket.num_elements; i++) {
         struct mutka_packet_elem* elem = &client->inpacket.elements[i];
         printf("[%i] -> %s:%s\n", i, elem->label.bytes, elem->data.bytes);
     }
-
 }
 
-bool add_new_trusted_host(struct mutka_client* client, struct mutka_str* host_publkey) {
-    printf("%s: Should trust host public key? (return true)\n", __func__);
+bool accept_new_trusted_host(struct mutka_client* client, struct mutka_str* host_publkey) {
+    printf("Save new trusted host public key: %s"
+            "(yes/no): ", host_publkey->bytes);
+    fflush(stdout);
 
-    return true;
+    char user_choise = read_user_input_yes_or_no();
+    return ((user_choise == 'Y') || (user_choise == 'y'));
 }
 
+
+bool accept_host_public_key_change(struct mutka_client* client, struct mutka_str* host_publkey) {
+    
+    printf("\033[31mWARNING: SERVER SIGNATURE KEY HAS CHANGED!\n"
+            "Received public key: %s"
+            "Someone may be trying to tamper with the server keys\n"
+            "\n"
+            "If you choose \"yes\" the old key will be overwritten and connection can continue (may be risky)\n"
+            "If you choose \"no\" you will be disconnected\n"
+            "Are you really sure you want to continue?\n\n"
+            "(yes/no): \033[0m", host_publkey->bytes);
+    fflush(stdout);
+
+    char user_choise = read_user_input_yes_or_no();
+    return ((user_choise == 'Y') || (user_choise == 'y'));
+}
+/*
+int main(int argc, char** argv) {
+
+
+    struct mutka_keypair ALICE_keys = mutka_init_keypair();
+    mutka_openssl_ED25519_keypair(&ALICE_keys);
+    mutka_dump_strbytes(&ALICE_keys.public_key, "public key (alice)");
+    mutka_dump_strbytes(&ALICE_keys.private_key, "private key (alice)");
+    printf("\n");
+    struct mutka_keypair STEVE_keys = mutka_init_keypair();
+    mutka_openssl_ED25519_keypair(&STEVE_keys);
+    mutka_dump_strbytes(&STEVE_keys.public_key, "public key (steve)");
+    mutka_dump_strbytes(&STEVE_keys.private_key, "private key (steve)");
+    printf("\n\n");
+
+
+    char* message = "Hello alice!";
+    size_t message_len = strlen(message);
+
+    struct mutka_str signature;
+    mutka_str_alloc(&signature);
+
+    if(!mutka_openssl_ED25519_sign(&signature, &STEVE_keys.private_key, message, message_len)) {
+        printf("Failed to sign.\n");
+    }
+
+    mutka_dump_strbytes(&signature, "signature");
+
+
+
+
+    STEVE_keys.public_key.bytes[0] = 'A';
+
+
+    printf("ALICE verify signature.\n");
+
+    if(!mutka_openssl_ED25519_verify(&STEVE_keys.public_key, &signature, message, message_len)) {
+        printf("Failed to verify.\n");
+    }
+    else {
+        printf("Verify OK!\n");
+    }
+
+
+    mutka_str_free(&signature);
+    mutka_free_keypair(&ALICE_keys);
+    mutka_free_keypair(&STEVE_keys);
+
+    return 0;
+}*/
 
 int main(int argc, char** argv) {
     if(argc < 2) {
@@ -123,7 +129,8 @@ int main(int argc, char** argv) {
     {
         .use_default_cfgdir = true, // "use /home/user/.mutka/"
 
-        .add_new_trusted_host_callback = add_new_trusted_host
+        .accept_new_trusted_host_callback = accept_new_trusted_host,
+        .accept_host_public_key_change_callback = accept_host_public_key_change
     };
 
     if(!mutka_validate_client_cfg(&config, nickname)) {
@@ -191,16 +198,46 @@ int main(int argc, char** argv) {
     client->packet_received_callback = packet_received;
 
 
-    printf("press enter to disconnect.\n");
 
-    char tmp = 0;
-    read(1, &tmp, 1);
+    printf("\033[35mPress [q] then [enter] to disconnect\033[0m\n");
+
+    // /dev/stdin is opened in nonblocking mode
+    // and mutex is used for it because callbacks are from another thread. 
+    // Otherwise this will read the same input which is meant for callback input.
+    
+    pthread_mutex_init(&stdin_read_mutex, NULL);
+    int fd = open("/dev/stdin", O_NONBLOCK);
+    bool running = true;
+
+    while(running) {
+
+        // Get some user input char.
+        pthread_mutex_lock(&stdin_read_mutex);
+        char input_ch = 0;
+        read(fd, &input_ch, 1); 
+        pthread_mutex_unlock(&stdin_read_mutex);
+
+        if(input_ch == 'q') {
+            break;
+        }
+
+        // Check if we should disconnect.
+        pthread_mutex_lock(&client->mutex);
+        if((client->flags & MUTKA_CLFLG_SHOULD_DISCONNECT)) {
+            printf("[libmutka]: Client should disconnect.\n");
+            running = false;
+        }
+        pthread_mutex_unlock(&client->mutex);
+
+        mutka_sleep_ms(100);
+    }
+
+    close(fd);
 
     mutka_disconnect(client);
-    printf("disconnected.\n");
+    printf("disconnected from %s\n", __FILE__);
     return 0;
 }
-
 
 
 

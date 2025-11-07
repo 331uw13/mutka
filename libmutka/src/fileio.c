@@ -102,7 +102,6 @@ out:
 }
 
 ssize_t mutka_file_size(const char* path) {
-
     struct stat sb;
     if(lstat(path, &sb) < 0) {
         mutka_set_errmsg("%s: lstat() | %s", __func__, strerror(errno));
@@ -112,10 +111,28 @@ ssize_t mutka_file_size(const char* path) {
     return sb.st_size;
 }
 
-bool mutka_map_file(const char* path, char** out, size_t* out_size) {
+bool mutka_map_file(const char* path, int prot, char** out, size_t* out_size) {
     bool result = false;
+        
+    int mmap_flags = 0;
+    int open_flags = 0;
 
-    int fd = open(path, O_RDONLY);
+    if((prot & PROT_WRITE) && !(prot & PROT_READ)) {
+        open_flags = O_RDWR;
+        mmap_flags = MAP_SHARED;
+    }
+    else
+    if((prot & PROT_READ) && !(prot & PROT_WRITE)) {
+        open_flags = O_RDONLY;
+        mmap_flags = MAP_PRIVATE;
+    }
+    else
+    if((prot & PROT_WRITE) && (prot & PROT_READ)) {
+        open_flags = O_RDWR;
+        mmap_flags = MAP_SHARED;
+    }
+
+    int fd = open(path, open_flags);
     struct stat sb;
 
 
@@ -132,14 +149,13 @@ bool mutka_map_file(const char* path, char** out, size_t* out_size) {
     *out_size = sb.st_size;
 
     if(sb.st_size == 0) {
-        //mutka_set_errmsg("%s: Empty file", __func__);
-        return true;
+        mutka_set_errmsg("%s: Not mapping empty file \"%s\"", __func__, path);
+        goto out;
     }
 
-
     if(out) {
-        *out = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-        if(!*out) {
+        *out = mmap(NULL, sb.st_size, prot, mmap_flags, fd, 0);
+        if(*out == MAP_FAILED) {
             mutka_set_errmsg("%s: mmap() | %s", __func__, strerror(errno));
             goto out;
         }
@@ -156,5 +172,31 @@ out:
     return result;
 }
 
+
+bool mutka_write_file(const char* path, char* data, size_t size) {
+    bool result = false;
+    if(!mutka_file_exists(path)) {
+        goto out;
+    }
+
+    int fd = open(path, O_WRONLY | O_TRUNC);
+    if(fd < 0) {
+        mutka_set_errmsg("%s: open() | %s", __func__, strerror(errno));
+        goto out;
+    }
+
+    if(write(fd, data, size) < 0) {
+        mutka_set_errmsg("%s: write() | %s", __func__, strerror(errno));
+        goto close_and_out;
+    }
+
+
+    result = true;
+
+close_and_out:
+    close(fd);
+out:
+    return result;
+}
 
 

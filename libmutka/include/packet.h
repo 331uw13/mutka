@@ -33,8 +33,8 @@ struct mutka_packet {
 
     int                       id;
     struct mutka_packet_elem* elements;
-    uint32_t                  num_elements;
-    uint32_t                  num_elems_allocated;
+    size_t                    num_elements;
+    size_t                    num_elems_allocated;
     
     struct mutka_raw_packet   raw_packet; // Received raw packet
 };
@@ -72,6 +72,7 @@ enum mutka_packet_ids : int {
 void mutka_alloc_rpacket(struct mutka_raw_packet* packet, size_t size);
 void mutka_free_rpacket(struct mutka_raw_packet* packet);
 
+void mutka_inpacket_init(struct mutka_packet* inpacket);
 void mutka_free_packet(struct mutka_packet* packet);
 
 // Clears previous packet data and writes packet_id.

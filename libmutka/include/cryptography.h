@@ -11,6 +11,9 @@
 #define AESGCM_IV_LEN 12
 #define SCRYPT_SALT_LEN 16
 
+
+
+
 bool mutka_openssl_X25519_keypair(struct mutka_keypair* keypair);
 bool mutka_openssl_ED25519_keypair(struct mutka_keypair* keypair);
 
@@ -40,6 +43,24 @@ bool mutka_openssl_AES256GCM_decrypt
     char* cipher_bytes, size_t cipher_bytes_size
 );
 
+bool mutka_openssl_ED25519_sign
+(
+    struct mutka_str* output,
+    struct mutka_str* private_key,
+    char* data, size_t data_size
+);
+
+bool mutka_openssl_ED25519_verify
+(
+    struct mutka_str* public_key,
+    struct mutka_str* signature,
+    char* data, size_t data_size
+);
+
+
+
+uint32_t mutka_get_base64_encoded_length(uint32_t decoded_len);
+uint32_t mutka_get_base64_decoded_length(uint32_t encoded_len);
 
 bool mutka_openssl_BASE64_encode(struct mutka_str* output, char* data, size_t data_size);
 bool mutka_openssl_BASE64_decode(struct mutka_str* output, char* data, size_t data_size);
