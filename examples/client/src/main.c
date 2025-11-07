@@ -190,7 +190,7 @@ int main(int argc, char** argv) {
 
     // Finally should be able to connect.
 
-    struct mutka_client* client = mutka_connect(&config, "127.0.0.1", "35580");
+    struct mutka_client* client = mutka_connect(&config, "192.168.1.144", "35580");
     if(!client) {
         return 1;
     }
