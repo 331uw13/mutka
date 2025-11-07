@@ -25,7 +25,7 @@ void mutka_set_errmsg(const char* msg_fmt, ...) {
     }
 
     va_list args;
-    va_start(args);
+    va_start(args, msg_fmt);
 
     char buffer[MUTKA_ERRMSG_MAX_SIZE+1] = { 0 };
     vsnprintf(

@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <sys/types.h>
+#include <stdbool.h>
 
 
 struct mutka_str {

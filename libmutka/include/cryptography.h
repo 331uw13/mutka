@@ -1,6 +1,7 @@
 #ifndef LIBMUTKA_CRYPTOGRAPHY_H
 #define LIBMUTKA_CRYPTOGRAPHY_H
 
+#include <stdbool.h>
 
 #include "keypair.h"
 
