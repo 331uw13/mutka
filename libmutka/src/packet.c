@@ -143,7 +143,7 @@ out:
 
 
 
-void mutka_send_rpacket(int socket_fd, struct mutka_raw_packet* packet) {
+void mutka_send_clear_rpacket(int socket_fd, struct mutka_raw_packet* packet) {
     if(packet->has_write_error) {
         return;
     }
@@ -174,6 +174,18 @@ void mutka_send_rpacket(int socket_fd, struct mutka_raw_packet* packet) {
 
 
     send(socket_fd, packet->data, packet->size, 0);
+}
+
+void mutka_send_rpacket
+(
+    int socket_fd,
+    struct mutka_raw_packet* packet,
+    struct mutka_str* self_metadata_privkey,
+    struct mutka_str* peer_metadata_publkey
+){
+
+
+
 }
 
 

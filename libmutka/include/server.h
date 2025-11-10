@@ -9,16 +9,16 @@
 #include "packet.h"
 
 
-// ---- Config flags ----
-#define MUTKA_S_FLG_REUSEADDR (1<<0)
-
+// ---- Server config flags ----
+#define MUTKA_SERVER_REUSEADDR        (1 << 0)
+#define MUTKA_SERVER_ENABLE_CAPTCHA   (1 << 1)
 
 struct mutka_server;
 
 struct mutka_server_cfg {
     uint16_t port;
     uint32_t max_clients;
-    int flags;
+    int      flags;
 
     bool(*accept_host_keygen_callback)();
     void(*client_connected_callback)(struct mutka_server*, struct mutka_client*);
@@ -35,7 +35,7 @@ struct mutka_server {
     struct mutka_keypair    host_ed25519;
     struct sockaddr_in      socket_addr;
     int                     socket_fd;
-
+    
     struct mutka_client*    clients;
     uint32_t                num_clients;
 
@@ -52,7 +52,6 @@ struct mutka_server* mutka_create_server
 );
 
 void mutka_close_server(struct mutka_server* server);
-
 void mutka_server_remove_client(struct mutka_server* server, struct mutka_client* client);
 
 

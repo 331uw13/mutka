@@ -7,14 +7,17 @@
 #include <pwd.h>
 #include <openssl/rand.h>
 
+#define MUTKA_CLIENT
 #include "../include/client.h"
 #include "../include/mutka.h"
 
 
 
+// TODO: Move this away from here...
 static struct client_global {
     
     pthread_t recv_thread;
+
 }
 global;
 
@@ -703,7 +706,7 @@ void mutka_init_metadata_key_exchange(struct mutka_client* client) {
             sizeof(client->client_nonce),
             RPACKET_ENCODE_BASE64);   
 
-    mutka_send_rpacket(client->socket_fd, &client->out_raw_packet);
+    mutka_send_clear_rpacket(client->socket_fd, &client->out_raw_packet);
 }
 
 
@@ -1003,8 +1006,17 @@ void mutka_client_handle_packet(struct mutka_client* client) {
             if(!mutka_openssl_ED25519_verify(
                         &client->host_public_key, &signature,
                         client->client_nonce, sizeof(client->client_nonce))) {
-                mutka_set_errmsg("WARNING: FAILED TO VERIFY HOST SIGNATURE!");
+
+                mutka_set_errmsg("FAILED TO VERIFY HOST SIGNATURE!");
                 client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
+            
+                mutka_rpacket_prep(&client->out_raw_packet, MPACKET_HOST_SIGNATURE_FAILED);
+                mutka_send_clear_rpacket(client->socket_fd, &client->out_raw_packet);
+            }
+            else {
+                printf("\033[32mSignature verified!\033[0m\n"); 
+                mutka_rpacket_prep(&client->out_raw_packet, MPACKET_HOST_SIGNATURE_OK);
+                mutka_send_clear_rpacket(client->socket_fd, &client->out_raw_packet);
             }
 
             mutka_str_free(&signature);

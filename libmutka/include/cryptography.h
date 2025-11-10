@@ -24,6 +24,16 @@ bool mutka_openssl_scrypt(
         char* salt,  size_t salt_size);
 
 
+bool mutka_openssl_derive_shared_key
+(
+    struct mutka_str* output,
+    struct mutka_str* self_privkey,
+    struct mutka_str* peer_publkey,
+    char*  hkdf_salt, 
+    size_t hkdf_salt_len,
+    const char* hkdf_info
+);
+
 bool mutka_openssl_AES256GCM_encrypt
 (
     struct mutka_str* cipher_out,

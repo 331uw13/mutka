@@ -48,21 +48,39 @@ enum mutka_packet_ids : int {
 
     MPACKET_HOST_PUBLIC_KEY,
 
-    // -----------------------------
-    // TODO: Update this information  (Outdated)
-    // -----------------------------
-    // When client connects to server, first they generate X25519 metadata keypair.
-    // And send the public key with this packet.
+    // Client and server will exchange metadata keys
+    // for encrypting and decrypting packet metadata.
+    // The packet's metadata doesnt contain sensetive information
+    // but it does add layer of privacy.
     //
-    // The server will then respond to the client
-    // containing the X25519 packet metadata public key for the specific client.
-    // The metadata keys are used to encrypt packet metadata.
-    // NOTE: packet metadata does _not_ contain any "secret" data
-    // and is not a problem if someone gets hold of it, but this adds a layer of privacy.
+    // The handshake can be initiated by the client
+    // by sending this packet id with randomly generated "client_nonce"
+    // The server will generate a signature which the client
+    // will try to verify with same "client_nonce" parameter as it sent.
+    // That will reduce the risk of MITM attacks, because if the attacker
+    // tries to generate its own keys and signature, the client will not be able to
+    // verify the signature. Clients will have server's ed25519 public key stored on disk.
+    // Also clients receive a warning 
+    // if the server's ed25519 public key ever changes.
+    // 
+    // NOTE: First contact MITM attacks cannot to be detected this way
+    //       but it will provide protection for future. 
     MPACKET_EXCHANGE_METADATA_KEYS,
 
+    // Client must respond to metadata key exchange
+    MPACKET_HOST_SIGNATURE_OK,
+    MPACKET_HOST_SIGNATURE_FAILED,
 
-    MPACKET_GET_CLIENTS_X25519_PUBLKEYS,
+    // MUTKA_SERVER_ENABLE_CAPTCHA must be set for this to be used.
+    // After the metadata keys have been exchanged
+    // and client is not yet verified
+    // It will send this packet containing the captcha buffer to client.
+    // If the answer is correct and server doesnt have password enabled
+    // the client is verified after good response.
+    MPACKET_CAPTCHA,
+
+
+    //MPACKET_GET_CLIENTS_X25519_PUBLKEYS,
 
 
 
@@ -88,7 +106,21 @@ bool mutka_rpacket_add_ent
     uint8_t encoding_option
 );
 
-void mutka_send_rpacket(int socket_fd, struct mutka_raw_packet* packet);
+
+// This function will encrypt packet data before its sent.
+void mutka_send_rpacket
+(
+    int socket_fd,
+    struct mutka_raw_packet* packet,
+    struct mutka_str* self_metadata_privkey,
+    struct mutka_str* peer_metadata_publkey
+);
+
+// IMPORTANT NOTE: 
+// mutka_send_clear_rpacket() should only be used for initial packets (metadata key exchange)
+// THIS FUNCTION DOES NOT ENCRYPT ANYTHING.
+void mutka_send_clear_rpacket(int socket_fd, struct mutka_raw_packet* packet);
+
 
 // Automatically allocates more memory for 'mutka_packet->elements'
 // if needed. Returns 'true' on success. 

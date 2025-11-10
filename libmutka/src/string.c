@@ -166,7 +166,6 @@ ssize_t mutka_charptr_find(char* data, size_t data_size, char* part, size_t part
         goto skip;
     }
 
-    size_t part_idx = 0;
     
     char* ch = &data[0];
     while(ch < data + data_size) {

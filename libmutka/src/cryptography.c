@@ -139,6 +139,150 @@ bool mutka_openssl_scrypt(
     return (res > 0);
 }
 
+static bool p_mutka_openssl_HKDF
+(
+    struct mutka_str* shared_key,
+    uint8_t* shared_secret,
+    size_t shared_secret_len,
+    char*       hkdf_salt,
+    size_t      hkdf_salt_len,
+    const char* hkdf_info
+){
+    bool result = false;
+    EVP_KDF* kdf = NULL;
+    EVP_KDF_CTX* ctx = NULL;
+
+    kdf = EVP_KDF_fetch(NULL, "HKDF", NULL);
+    if(!kdf) {
+        openssl_error();
+        goto out;
+    }
+
+    ctx = EVP_KDF_CTX_new(kdf);
+    if(!ctx) {
+        openssl_error();
+        goto out;
+    }
+
+    OSSL_PARAM params[5] = {
+        OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, SN_sha256, strlen(SN_sha256)),
+        OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, shared_secret, shared_secret_len),
+        OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, (void*)hkdf_info, strlen(hkdf_info)),
+        OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, (void*)hkdf_salt, hkdf_salt_len),
+        OSSL_PARAM_construct_end()
+    };
+
+    mutka_str_reserve(shared_key, X25519_KEYLEN);
+    
+    if(!EVP_KDF_derive(ctx, (uint8_t*)shared_key->bytes, X25519_KEYLEN, params)) {
+        openssl_error();
+        goto out;
+    }
+    
+    result = true;
+
+out:
+    if(kdf) {
+        EVP_KDF_free(kdf);
+    }
+    if(ctx) {
+        EVP_KDF_CTX_free(ctx);
+    }
+    return result;
+}
+
+bool mutka_openssl_derive_shared_key
+(
+    struct mutka_str* output,
+    struct mutka_str* self_privkey,
+    struct mutka_str* peer_publkey,
+    char*  hkdf_salt, 
+    size_t hkdf_salt_len,
+    const char* hkdf_info
+){
+    bool result = false;
+
+    size_t shared_secret_len = 0;
+    uint8_t* shared_secret = NULL;
+
+    EVP_PKEY* peer_pkey = EVP_PKEY_new_raw_public_key
+        (EVP_PKEY_X25519, NULL, (uint8_t*)peer_publkey->bytes, peer_publkey->size);
+
+    EVP_PKEY* self_pkey = EVP_PKEY_new_raw_private_key
+        (EVP_PKEY_X25519, NULL, (uint8_t*)self_privkey->bytes, self_privkey->size);
+
+    EVP_PKEY_CTX* ctx = NULL;
+
+    if(!peer_pkey) {
+        openssl_error();
+        goto out;
+    }
+
+    if(!self_pkey) {
+        openssl_error();
+        goto out;
+    }
+
+    ctx = EVP_PKEY_CTX_new(self_pkey, NULL);
+    if(!ctx) {
+        openssl_error();
+        goto out;
+    }
+
+    if(!EVP_PKEY_derive_init(ctx)) {
+        openssl_error();
+        goto out;
+    }
+
+    if(!EVP_PKEY_derive_set_peer(ctx, peer_pkey)) {
+        openssl_error();
+        goto out;
+    }
+
+
+    // Get shared secret length.
+    if(!EVP_PKEY_derive(ctx, NULL, &shared_secret_len)) {
+        openssl_error();
+        goto out;
+    }
+
+    shared_secret = malloc(shared_secret_len);
+    if(!EVP_PKEY_derive(ctx, shared_secret, &shared_secret_len)) {
+        openssl_error();
+        goto out;
+    }
+
+    // Pass the shared secret through HKDF to make the key stronger.
+    if(!p_mutka_openssl_HKDF(output,
+                shared_secret,
+                shared_secret_len,
+                hkdf_salt,
+                hkdf_salt_len,
+                hkdf_info)) {
+        goto out;
+    }
+
+
+    result = true;
+
+out:
+
+    if(ctx) {
+        EVP_PKEY_CTX_free(ctx);
+    }
+    if(peer_pkey) {
+        EVP_PKEY_free(peer_pkey);
+    }
+    if(self_pkey) {
+        EVP_PKEY_free(self_pkey);
+    }
+    if(shared_secret) {
+        memset(shared_secret, 0, shared_secret_len);
+        free(shared_secret);
+    }
+
+    return result;
+}
 
 bool mutka_openssl_AES256GCM_encrypt
 (

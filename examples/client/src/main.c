@@ -1,12 +1,11 @@
-
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
 #include <pthread.h>
 
+#define MUTKA_CLIENT
 #include "../../../libmutka/include/mutka.h"
 
-#include "../../../libmutka/include/cryptography.h"
 
 
 // Mutex is used for reading input because the main thread requires input as well.
@@ -63,56 +62,7 @@ bool accept_host_public_key_change(struct mutka_client* client, struct mutka_str
     char user_choise = read_user_input_yes_or_no();
     return ((user_choise == 'Y') || (user_choise == 'y'));
 }
-/*
-int main(int argc, char** argv) {
 
-
-    struct mutka_keypair ALICE_keys = mutka_init_keypair();
-    mutka_openssl_ED25519_keypair(&ALICE_keys);
-    mutka_dump_strbytes(&ALICE_keys.public_key, "public key (alice)");
-    mutka_dump_strbytes(&ALICE_keys.private_key, "private key (alice)");
-    printf("\n");
-    struct mutka_keypair STEVE_keys = mutka_init_keypair();
-    mutka_openssl_ED25519_keypair(&STEVE_keys);
-    mutka_dump_strbytes(&STEVE_keys.public_key, "public key (steve)");
-    mutka_dump_strbytes(&STEVE_keys.private_key, "private key (steve)");
-    printf("\n\n");
-
-
-    char* message = "Hello alice!";
-    size_t message_len = strlen(message);
-
-    struct mutka_str signature;
-    mutka_str_alloc(&signature);
-
-    if(!mutka_openssl_ED25519_sign(&signature, &STEVE_keys.private_key, message, message_len)) {
-        printf("Failed to sign.\n");
-    }
-
-    mutka_dump_strbytes(&signature, "signature");
-
-
-
-
-    STEVE_keys.public_key.bytes[0] = 'A';
-
-
-    printf("ALICE verify signature.\n");
-
-    if(!mutka_openssl_ED25519_verify(&STEVE_keys.public_key, &signature, message, message_len)) {
-        printf("Failed to verify.\n");
-    }
-    else {
-        printf("Verify OK!\n");
-    }
-
-
-    mutka_str_free(&signature);
-    mutka_free_keypair(&ALICE_keys);
-    mutka_free_keypair(&STEVE_keys);
-
-    return 0;
-}*/
 
 int main(int argc, char** argv) {
     if(argc < 2) {
@@ -190,7 +140,7 @@ int main(int argc, char** argv) {
 
     // Finally should be able to connect.
 
-    struct mutka_client* client = mutka_connect(&config, "192.168.1.144", "35580");
+    struct mutka_client* client = mutka_connect(&config, "127.0.0.1", "35580");
     if(!client) {
         return 1;
     }
@@ -228,7 +178,6 @@ int main(int argc, char** argv) {
             running = false;
         }
         pthread_mutex_unlock(&client->mutex);
-
         mutka_sleep_ms(100);
     }
 

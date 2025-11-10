@@ -51,7 +51,7 @@ int main() {
     struct mutka_server_cfg config = (struct mutka_server_cfg) {
         .port = 35580,
         .max_clients = 8,
-        .flags = (MUTKA_S_FLG_REUSEADDR),
+        .flags = (MUTKA_SERVER_REUSEADDR | MUTKA_SERVER_ENABLE_CAPTCHA),
 
         .accept_host_keygen_callback    = accept_host_keygen,
         .client_connected_callback      = client_connected,
