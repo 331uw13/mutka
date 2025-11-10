@@ -11,7 +11,7 @@
 #define AESGCM_TAG_LEN 16
 #define AESGCM_IV_LEN 12
 #define SCRYPT_SALT_LEN 16
-
+#define HKDF_SALT_LEN 16
 
 
 

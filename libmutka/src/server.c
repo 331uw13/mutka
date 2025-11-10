@@ -510,8 +510,10 @@ static void p_mutka_server_send_captcha_challenge(struct mutka_server* server, s
             captcha_buffer_len,
             RPACKET_ENCODE_NONE);
 
-
-
+    mutka_send_rpacket(client->socket_fd,
+            &server->out_raw_packet,
+            &client->metadata_keys.private_key,
+            &client->peer_metadata_publkey);
 
     free(captcha_buffer);
 }

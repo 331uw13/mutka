@@ -146,7 +146,8 @@ static bool p_mutka_openssl_HKDF
     size_t shared_secret_len,
     char*       hkdf_salt,
     size_t      hkdf_salt_len,
-    const char* hkdf_info
+    const char* hkdf_info,
+    size_t      output_length
 ){
     bool result = false;
     EVP_KDF* kdf = NULL;
@@ -174,11 +175,12 @@ static bool p_mutka_openssl_HKDF
 
     mutka_str_reserve(shared_key, X25519_KEYLEN);
     
-    if(!EVP_KDF_derive(ctx, (uint8_t*)shared_key->bytes, X25519_KEYLEN, params)) {
+    if(!EVP_KDF_derive(ctx, (uint8_t*)shared_key->bytes, output_length, params)) {
         openssl_error();
         goto out;
     }
-    
+
+    shared_key->size = output_length;
     result = true;
 
 out:
@@ -258,7 +260,8 @@ bool mutka_openssl_derive_shared_key
                 shared_secret_len,
                 hkdf_salt,
                 hkdf_salt_len,
-                hkdf_info)) {
+                hkdf_info,
+                X25519_KEYLEN)) {
         goto out;
     }
 

@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <openssl/rand.h>
 
 #include <stdio.h>
 
@@ -8,6 +9,7 @@
 #include "../include/packet.h"
 #include "../include/mutka.h"
 #include "../include/memory.h"
+#include "../include/cryptography.h"
 
 #define DEBUG
 
@@ -184,8 +186,41 @@ void mutka_send_rpacket
     struct mutka_str* peer_metadata_publkey
 ){
 
+    char gcm_iv[AESGCM_IV_LEN] = { 0 };
+    char hkdf_salt[HKDF_SALT_LEN] = { 0 };
 
+    RAND_bytes((uint8_t*)gcm_iv, sizeof(gcm_iv));
+    RAND_bytes((uint8_t*)hkdf_salt, sizeof(hkdf_salt));
+    
+    const char* hkdf_info = "RPACKET_METADATA";
 
+    struct mutka_str shared_key;
+    struct mutka_str gcm_tag;
+    struct mutka_str cipher;
+
+    mutka_str_alloc(&gcm_tag);
+    mutka_str_alloc(&cipher);
+    mutka_str_alloc(&shared_key);
+
+    if(!mutka_openssl_derive_shared_key(
+                &shared_key,
+                self_metadata_privkey,
+                peer_metadata_publkey,
+                hkdf_salt,
+                sizeof(hkdf_salt),
+                hkdf_info)) {
+        mutka_set_errmsg("%s: Failed to derive shared key.", __func__);
+        goto free_and_out;
+    }
+
+    mutka_dump_strbytes(&shared_key, "shared_key");
+
+   
+
+free_and_out:
+    mutka_str_free(&shared_key);
+    mutka_str_free(&gcm_tag);
+    mutka_str_free(&cipher);
 }
 
 

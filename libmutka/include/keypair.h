@@ -3,9 +3,10 @@
 
 #include "string.h"
 
+#include <stdint.h>
 
 
-
+typedef uint8_t mutka_key128bit[32];
 
 
 struct mutka_keypair {
