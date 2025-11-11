@@ -13,7 +13,7 @@ bool mutka_dir_exists(const char* path);
 bool mutka_mkdir_p(const char* path, mode_t perm); 
 
 bool mutka_file_clear(const char* path);
-bool mutka_file_append(const char* path, char* data, size_t size);
+bool mutka_file_append(const char* path, void* data, size_t size);
 
 // Maps file into memory with 'prot' access.
 // 'prot' can one or both flags: PROT_READ, PROT_WRITE
@@ -22,7 +22,7 @@ bool mutka_file_append(const char* path, char* data, size_t size);
 // to avoid undefined reads in the future for the file.
 bool mutka_map_file(const char* path, int prot, char** out, size_t* out_size);
 
-bool mutka_write_file(const char* path, char* data, size_t size);
+bool mutka_write_file(const char* path, void* data, size_t size);
 
 // On error returns -1 otherwise the file size.
 ssize_t mutka_file_size(const char* path);

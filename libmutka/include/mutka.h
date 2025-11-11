@@ -20,10 +20,17 @@ void mutka_set_errmsg_callback(void(*callback)(char*, size_t));
 
 // Returns 'true' when socket_fd is ready to be read without blocking.
 bool mutka_socket_rdready_inms(int socket_fd, int timeout_ms);
-
 void mutka_sleep_ms(int ms);
 
 void mutka_dump_strbytes(struct mutka_str* str, const char* label); // For debugging.
 void mutka_dump_bytes(char* bytes, size_t size, const char* label); // For debugging.
+
+size_t mutka_get_encoded_buffer_len(size_t decoded_len);
+size_t mutka_get_decoded_buffer_len(size_t encoded_len);
+
+void mutka_encode(struct mutka_str* str, uint8_t* bytes, size_t size);
+bool mutka_decode(uint8_t* buf, size_t buf_memsize, char* encoded, size_t size);
+
+
 
 #endif

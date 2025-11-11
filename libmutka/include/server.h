@@ -32,10 +32,12 @@ struct mutka_server {
     pthread_mutex_t mutex;
     
     struct mutka_server_cfg config;
-    struct mutka_keypair    host_ed25519;
     struct sockaddr_in      socket_addr;
     int                     socket_fd;
     
+    key128bit_t             host_ed25519_privkey;
+    key128bit_t             host_ed25519_publkey;
+
     struct mutka_client*    clients;
     uint32_t                num_clients;
 

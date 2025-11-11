@@ -77,7 +77,7 @@ bool mutka_rpacket_add_ent
 (
     struct mutka_raw_packet* packet,
     const char* label,
-    char* data,
+    void* data,
     size_t data_size,
     uint8_t encoding_option
 ){
@@ -92,12 +92,9 @@ bool mutka_rpacket_add_ent
     printf("%s: Add entry (data = %p, data_size = %li)\n",
             __func__, data, data_size);
 
-    if(encoding_option == RPACKET_ENCODE_BASE64) {
+    if(encoding_option == RPACKET_ENCODE) {
         mutka_str_alloc(&data_encoded);
-        if(!mutka_openssl_BASE64_encode(&data_encoded, data, data_size)) {
-            packet->has_write_error = true;
-            goto out;
-        }
+        mutka_encode(&data_encoded, data, data_size);
     }
 
 
@@ -164,14 +161,23 @@ void mutka_send_clear_rpacket(int socket_fd, struct mutka_raw_packet* packet) {
     memmove(packet->data, &packet->size, sizeof(packet->size));
 
 #ifdef DEBUG
+    printf("\n\033[90m-------------------------------------------\033[0m\n");
     printf("SENT PACKET:\n");
+    printf("\033[34m");
+    int _column_count = 0;
     for(uint32_t i = 0; i < packet->size; i++) {
         printf("%02X ", (uint8_t)packet->data[i]);
-        if((i % 24) == 23) {
+        _column_count++;
+
+        if(_column_count > 24) {
             printf("\n");
+            _column_count = 0;
         }
     }
-    printf("\n-------------------------------------------\n");
+    if(_column_count > 0) {
+        printf("\n");
+    }
+    printf("\033[90m-------------------------------------------\033[0m\n");
 #endif
 
 
@@ -182,45 +188,11 @@ void mutka_send_rpacket
 (
     int socket_fd,
     struct mutka_raw_packet* packet,
-    struct mutka_str* self_metadata_privkey,
-    struct mutka_str* peer_metadata_publkey
+    key128bit_t* self_metadata_privkey,
+    key128bit_t* peer_metadata_publkey
 ){
 
-    char gcm_iv[AESGCM_IV_LEN] = { 0 };
-    char hkdf_salt[HKDF_SALT_LEN] = { 0 };
-
-    RAND_bytes((uint8_t*)gcm_iv, sizeof(gcm_iv));
-    RAND_bytes((uint8_t*)hkdf_salt, sizeof(hkdf_salt));
-    
-    const char* hkdf_info = "RPACKET_METADATA";
-
-    struct mutka_str shared_key;
-    struct mutka_str gcm_tag;
-    struct mutka_str cipher;
-
-    mutka_str_alloc(&gcm_tag);
-    mutka_str_alloc(&cipher);
-    mutka_str_alloc(&shared_key);
-
-    if(!mutka_openssl_derive_shared_key(
-                &shared_key,
-                self_metadata_privkey,
-                peer_metadata_publkey,
-                hkdf_salt,
-                sizeof(hkdf_salt),
-                hkdf_info)) {
-        mutka_set_errmsg("%s: Failed to derive shared key.", __func__);
-        goto free_and_out;
-    }
-
-    mutka_dump_strbytes(&shared_key, "shared_key");
-
-   
-
-free_and_out:
-    mutka_str_free(&shared_key);
-    mutka_str_free(&gcm_tag);
-    mutka_str_free(&cipher);
+    printf("%s\n", __func__);
 }
 
 
@@ -272,15 +244,22 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
 
 #ifdef DEBUG
 
+    printf("\n\033[90m-------------------------------------------\033[0m\n");
     printf("RECEIVED PACKET:\n");
+    printf("\033[35m");
+    int _column_count = 0;
     for(uint32_t i = 0; i < raw_packet->size; i++) {
         printf("%02X ", (uint8_t)raw_packet->data[i]);
-        if((i % 24) == 23) {
+        _column_count++;
+        if(_column_count > 24) {
             printf("\n");
+            _column_count = 0;
         }
     }
-
-    printf("\n-------------------------------------------\n");
+    if(_column_count > 0) {
+        printf("\n");
+    }
+    printf("\033[90m-------------------------------------------\033[0m\n");
 
 #endif
     // Format: packet_size, packet_id, entry:data|entry:data|entry:data ...

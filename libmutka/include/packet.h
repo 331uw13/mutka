@@ -5,13 +5,14 @@
 #include <stddef.h>
 
 #include "string.h"
+#include "key.h"
 
 #define MUTKA_RAW_PACKET_DEFMEMSIZE (1024 * 8) 
 
 
 // Encoding options
 #define RPACKET_ENCODE_NONE    0x01
-#define RPACKET_ENCODE_BASE64  0x02
+#define RPACKET_ENCODE         0x02
 
 
 struct mutka_raw_packet {
@@ -101,7 +102,7 @@ bool mutka_rpacket_add_ent
 (
     struct mutka_raw_packet* packet,
     const char* label,
-    char* data,
+    void*  data,
     size_t data_size,
     uint8_t encoding_option
 );
@@ -112,8 +113,8 @@ void mutka_send_rpacket
 (
     int socket_fd,
     struct mutka_raw_packet* packet,
-    struct mutka_str* self_metadata_privkey,
-    struct mutka_str* peer_metadata_publkey
+    key128bit_t* self_metadata_privkey,
+    key128bit_t* peer_metadata_publkey
 );
 
 // IMPORTANT NOTE: 

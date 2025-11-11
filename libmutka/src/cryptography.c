@@ -11,6 +11,12 @@
 #include "../include/mutka.h"
 
 
+void mutka_dump_key(key128bit_t* key, const char* label) {
+    mutka_dump_bytes((char*)key->bytes, sizeof(key->bytes), label);
+}
+void mutka_dump_sig(signature_t* sig, const char* label) {
+    mutka_dump_bytes((char*)sig->bytes, sizeof(sig->bytes), label);
+}
 
 static void openssl_error_ext(const char* file, const char* func, int line) {
     char buffer[256] = { 0 };
@@ -21,7 +27,12 @@ static void openssl_error_ext(const char* file, const char* func, int line) {
 #define openssl_error() openssl_error_ext(__FILE__, __func__, __LINE__)
 
 
-static bool mutka_openssl_keypair_ctx(struct mutka_keypair* keypair, EVP_PKEY_CTX* ctx) {
+static bool mutka_openssl_keypair_ctx
+(
+    key128bit_t* privkey_out,
+    key128bit_t* publkey_out,
+    EVP_PKEY_CTX* ctx
+){
     bool result = false;
 
     EVP_PKEY* pkey = NULL;
@@ -59,22 +70,16 @@ static bool mutka_openssl_keypair_ctx(struct mutka_keypair* keypair, EVP_PKEY_CT
     
 
     // Get private key bytes.
-   
-    mutka_str_reserve(&keypair->private_key, private_keylen);
-    keypair->private_key.size = private_keylen;
 
-    if(EVP_PKEY_get_raw_private_key(pkey, (uint8_t*)keypair->private_key.bytes, &private_keylen) <= 0) {
+    if(EVP_PKEY_get_raw_private_key(pkey, privkey_out->bytes, &private_keylen) <= 0) {
         openssl_error();
         goto out;
     }
 
     
     // Get public key bytes.
-    
-    mutka_str_reserve(&keypair->public_key, public_keylen);
-    keypair->public_key.size = public_keylen;
 
-    if(EVP_PKEY_get_raw_public_key(pkey, (uint8_t*)keypair->public_key.bytes, &public_keylen) <= 0) {
+    if(EVP_PKEY_get_raw_public_key(pkey, publkey_out->bytes, &public_keylen) <= 0) {
         openssl_error();
         goto out;
     }
@@ -95,23 +100,26 @@ out:
 }
 
 
-bool mutka_openssl_X25519_keypair(struct mutka_keypair* keypair) {
+bool mutka_openssl_X25519_keypair(key128bit_t* privkey_out, key128bit_t* publkey_out) {
     EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_X25519, NULL);
-    return mutka_openssl_keypair_ctx(keypair, ctx);
+    return mutka_openssl_keypair_ctx(privkey_out, publkey_out, ctx);
 }
 
 
-bool mutka_openssl_ED25519_keypair(struct mutka_keypair* keypair) {
+bool mutka_openssl_ED25519_keypair(key128bit_t* privkey_out, key128bit_t* publkey_out) {
     EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, NULL);
-    return mutka_openssl_keypair_ctx(keypair, ctx);
+    return mutka_openssl_keypair_ctx(privkey_out, publkey_out, ctx);
 }
 
 
 bool mutka_openssl_scrypt(
-        struct mutka_str* derived_key,
-        uint32_t output_size,
-        char* input, size_t input_size,
-        char* salt,  size_t salt_size) {
+    struct mutka_str* derived_key,
+    uint32_t output_size,
+    char*    input,
+    size_t   input_size,
+    uint8_t* salt,
+    size_t   salt_size
+){
 
     if(!input || !input_size) {
         return false;
@@ -139,15 +147,16 @@ bool mutka_openssl_scrypt(
     return (res > 0);
 }
 
-static bool p_mutka_openssl_HKDF
+bool mutka_openssl_HKDF
 (
-    struct mutka_str* shared_key,
-    uint8_t* shared_secret,
-    size_t shared_secret_len,
-    char*       hkdf_salt,
-    size_t      hkdf_salt_len,
-    const char* hkdf_info,
-    size_t      output_length
+    uint8_t*     output,
+    size_t       output_memsize,
+    uint8_t*     shared_secret,
+    size_t       shared_secret_len,
+    uint8_t*     hkdf_salt,
+    size_t       hkdf_salt_len,
+    const char*  hkdf_info,
+    size_t       output_length
 ){
     bool result = false;
     EVP_KDF* kdf = NULL;
@@ -173,14 +182,17 @@ static bool p_mutka_openssl_HKDF
         OSSL_PARAM_construct_end()
     };
 
-    mutka_str_reserve(shared_key, X25519_KEYLEN);
+    if(output_length != output_memsize) {
+        mutka_set_errmsg("%s: Failed to get correct output length from HKDF.", __func__);
+        goto out;
+    }
     
-    if(!EVP_KDF_derive(ctx, (uint8_t*)shared_key->bytes, output_length, params)) {
+    if(!EVP_KDF_derive(ctx, (uint8_t*)output, output_length, params)) {
         openssl_error();
         goto out;
     }
 
-    shared_key->size = output_length;
+
     result = true;
 
 out:
@@ -195,11 +207,11 @@ out:
 
 bool mutka_openssl_derive_shared_key
 (
-    struct mutka_str* output,
-    struct mutka_str* self_privkey,
-    struct mutka_str* peer_publkey,
-    char*  hkdf_salt, 
-    size_t hkdf_salt_len,
+    key128bit_t* output,
+    key128bit_t* self_privkey,
+    key128bit_t* peer_publkey,
+    uint8_t*  hkdf_salt, 
+    size_t    hkdf_salt_len,
     const char* hkdf_info
 ){
     bool result = false;
@@ -208,10 +220,10 @@ bool mutka_openssl_derive_shared_key
     uint8_t* shared_secret = NULL;
 
     EVP_PKEY* peer_pkey = EVP_PKEY_new_raw_public_key
-        (EVP_PKEY_X25519, NULL, (uint8_t*)peer_publkey->bytes, peer_publkey->size);
+        (EVP_PKEY_X25519, NULL, peer_publkey->bytes, sizeof(peer_publkey->bytes));
 
     EVP_PKEY* self_pkey = EVP_PKEY_new_raw_private_key
-        (EVP_PKEY_X25519, NULL, (uint8_t*)self_privkey->bytes, self_privkey->size);
+        (EVP_PKEY_X25519, NULL, self_privkey->bytes, sizeof(self_privkey->bytes));
 
     EVP_PKEY_CTX* ctx = NULL;
 
@@ -255,7 +267,9 @@ bool mutka_openssl_derive_shared_key
     }
 
     // Pass the shared secret through HKDF to make the key stronger.
-    if(!p_mutka_openssl_HKDF(output,
+    if(!mutka_openssl_HKDF(
+                output->bytes,
+                sizeof(output->bytes),
                 shared_secret,
                 shared_secret_len,
                 hkdf_salt,
@@ -291,10 +305,12 @@ bool mutka_openssl_AES256GCM_encrypt
 (
     struct mutka_str* cipher_out,
     struct mutka_str* tag_out,
-    char* gcm_key,
-    char* gcm_iv,
-    char* gcm_aad, size_t gcm_aad_len,
-    char* input, size_t input_size
+    uint8_t* gcm_key,
+    uint8_t* gcm_iv,
+    char*    gcm_aad,
+    size_t   gcm_aad_len,
+    void*    input,
+    size_t   input_size
 ){
     bool result = false;
  
@@ -344,7 +360,7 @@ bool mutka_openssl_AES256GCM_encrypt
 
 
 
-    if(!EVP_EncryptInit_ex2(ctx, cipher, (uint8_t*)gcm_key, (uint8_t*)gcm_iv, params)) {
+    if(!EVP_EncryptInit_ex2(ctx, cipher, gcm_key, gcm_iv, params)) {
         openssl_error();
         goto out;
     }
@@ -399,11 +415,14 @@ out:
 bool mutka_openssl_AES256GCM_decrypt
 (
     struct mutka_str* output,
-    char* gcm_key,
-    char* gcm_iv,
-    char* gcm_aad, size_t gcm_aad_len,
-    char* expected_tag, size_t expected_tag_len,
-    char* cipher_bytes, size_t cipher_bytes_size
+    uint8_t* gcm_key,
+    uint8_t* gcm_iv,
+    char*    gcm_aad,
+    size_t   gcm_aad_len,
+    char*    expected_tag,
+    size_t   expected_tag_len,
+    char*    cipher_bytes,
+    size_t   cipher_bytes_size
 ){
     bool result = false;
 
@@ -433,7 +452,7 @@ bool mutka_openssl_AES256GCM_decrypt
     params[0] = OSSL_PARAM_construct_size_t(OSSL_CIPHER_PARAM_AEAD_IVLEN, &gcm_iv_len);
 
 
-    if(!EVP_DecryptInit_ex2(ctx, cipher, (uint8_t*)gcm_key, (uint8_t*)gcm_iv, params)) {
+    if(!EVP_DecryptInit_ex2(ctx, cipher, gcm_key, gcm_iv, params)) {
         openssl_error();
         goto out;
     }
@@ -481,9 +500,10 @@ out:
 
 bool mutka_openssl_ED25519_sign
 (
-    struct mutka_str* output,
-    struct mutka_str* private_key,
-    char* data, size_t data_size
+    signature_t* signature,
+    key128bit_t* private_key,
+    char*  data,
+    size_t data_size
 ){
     bool result = false;
     EVP_MD_CTX* ctx = NULL;
@@ -495,7 +515,7 @@ bool mutka_openssl_ED25519_sign
         goto out;
     }
 
-    pkey = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, NULL, (const uint8_t*)private_key->bytes, private_key->size);
+    pkey = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, NULL, private_key->bytes, sizeof(private_key->bytes));
     if(!pkey) {
         openssl_error();
         goto out;
@@ -513,10 +533,9 @@ bool mutka_openssl_ED25519_sign
         goto out;
     }
 
-    mutka_str_reserve(output, signature_len);
-    EVP_DigestSign(ctx, (uint8_t*)output->bytes, &signature_len, (const uint8_t*)data, data_size);
+    EVP_DigestSign(ctx, signature->bytes, &signature_len, (const uint8_t*)data, data_size);
 
-    output->size = signature_len;
+    //output->size = signature_len;
     result = true;
 
 out:
@@ -533,9 +552,10 @@ out:
 
 bool mutka_openssl_ED25519_verify
 (
-    struct mutka_str* public_key,
-    struct mutka_str* signature,
-    char* data, size_t data_size
+    key128bit_t* public_key,
+    signature_t* signature,
+    char*  data,
+    size_t data_size
 ){
     bool result = false;
     EVP_MD_CTX* ctx = NULL;
@@ -546,7 +566,7 @@ bool mutka_openssl_ED25519_verify
         goto out;
     }
 
-    pkey = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, NULL, (const uint8_t*)public_key->bytes, public_key->size);
+    pkey = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, NULL, public_key->bytes, sizeof(public_key->bytes));
     if(!pkey) {
         openssl_error();
         goto out;
@@ -556,9 +576,10 @@ bool mutka_openssl_ED25519_verify
         goto out;
     }
 
-    result = (EVP_DigestVerify(ctx,
-            (uint8_t*)signature->bytes, signature->size,
-            (const uint8_t*)data, data_size) == 1);
+    result = (EVP_DigestVerify(ctx, 
+                signature->bytes,
+                sizeof(signature->bytes),
+                (const uint8_t*)data, data_size) == 1);
 
 out:
     if(ctx) {
@@ -571,89 +592,70 @@ out:
     return result;
 }
 
-
+/*
 uint32_t mutka_get_base64_encoded_length(uint32_t decoded_len) {
-    return (uint32_t)floor(((decoded_len + 2) / 3) * 4);
+    return (uint32_t)(((decoded_len + 2) / 3) * 4);
 }
 
-uint32_t mutka_get_base64_decoded_length(uint32_t encoded_len) {
-    return (uint32_t)floor((encoded_len / 4) * 3 - 1);
-}
-
-
-bool mutka_openssl_BASE64_encode(struct mutka_str* output, char* data, size_t data_size) {
-    EVP_ENCODE_CTX* ctx = NULL;
-    int output_len = 0;
-    int tmp_len = 0;
-    bool result = false;
-
-    ctx = EVP_ENCODE_CTX_new();
-    if(!ctx) {
-        openssl_error();
-        goto out;
+uint32_t mutka_get_base64_decoded_length(char* encoded, uint32_t encoded_len) {
+    if(encoded_len == 0) {
+        return 0;
     }
+    
+    int num_padding = 0;
+    char* ch = &encoded[encoded_len-1];
+    while(ch > &encoded[0]) {
+        if(*ch == '=') {
+            num_padding++;
+            if(num_padding >= 2) {
+                break;
+            }
+        }
+        ch--;
+    }
+    return (uint32_t)((encoded_len / 4) * 3 - num_padding);
+}
 
-    EVP_EncodeInit(ctx);
-
+bool mutka_openssl_BASE64_encode_tostr(struct mutka_str* output, char* encoded, size_t encoded_size) {
+    size_t encoded_length = mutka_get_base64_encoded_length(encoded_size);
+    
     mutka_str_clear(output);
-    mutka_str_reserve(output, mutka_get_base64_encoded_length(data_size)+1);
+    mutka_str_reserve(output, encoded_length);
 
-    if(!EVP_EncodeUpdate(ctx, (uint8_t*)output->bytes, &output_len, (uint8_t*)data, data_size)) {
+    int result = EVP_EncodeBlock((uint8_t*)output->bytes, (uint8_t*)encoded, encoded_size);
+    if(result < 0) {
         openssl_error();
-        goto out;
+        return false;
     }
 
-    EVP_EncodeFinal(ctx, (uint8_t*)output->bytes + output_len, &tmp_len);
-    output->size = output_len + tmp_len;
-
-    result = true;
-
-
-out:
-    if(ctx) {
-        EVP_ENCODE_CTX_free(ctx);
-    }
-
-    return result;
+    output->size = encoded_length;
+    return true;
 }
 
-
-
-bool mutka_openssl_BASE64_decode(struct mutka_str* output, char* data, size_t data_size) {
-    EVP_ENCODE_CTX* ctx = NULL;
-    int output_len = 0;
-    int tmp_len = 0;
-    bool result = false;
-
-    ctx = EVP_ENCODE_CTX_new();
-    if(!ctx) {
-        openssl_error();
-        goto out;
+size_t mutka_openssl_BASE64_decode_tobuf(void* buffer, size_t buffer_memsize, char* encoded, size_t encoded_size) {
+    
+    size_t decoded_length = mutka_get_base64_decoded_length(encoded, encoded_size);
+    if(decoded_length > buffer_memsize) {
+        mutka_set_errmsg("%s: Destination buffer memory size is smaller than expected. (dst: %li, src: %li)", 
+                __func__, buffer_memsize, decoded_length);
+        return 0;
     }
 
-    EVP_DecodeInit(ctx);
+    int result = EVP_DecodeBlock((uint8_t*)buffer, (uint8_t*)encoded, encoded_size);
+    if(result < 0) {
+        openssl_error();
+        decoded_length = 0;
+    }
+    
+    return decoded_length;
+}
 
+bool mutka_openssl_BASE64_decode_tostr(struct mutka_str* output, char* encoded, size_t encoded_size) {
     mutka_str_clear(output);
-    mutka_str_reserve(output, mutka_get_base64_decoded_length(data_size)+1);
+    mutka_str_reserve(output, mutka_get_base64_decoded_length(encoded, encoded_size)+1);
 
-    if(EVP_DecodeUpdate(ctx, (uint8_t*)output->bytes, &output_len, (uint8_t*)data, data_size) < 0) {
-        openssl_error();
-        goto out;
-    }
+    output->size = mutka_openssl_BASE64_decode_tobuf(output->bytes, output->memsize, encoded, encoded_size);
 
-    if(EVP_DecodeFinal(ctx, (uint8_t*)output->bytes + output_len, &tmp_len) < 0) {
-        openssl_error();
-        goto out;
-    }
-
-    output->size = output_len + tmp_len;
-    result = true;
-
-out:
-    if(ctx) {
-        EVP_ENCODE_CTX_free(ctx);
-    }
-
-    return result;
+    return (output->size > 0);
 }
-
+*/

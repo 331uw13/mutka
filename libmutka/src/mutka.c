@@ -8,7 +8,6 @@
 #include "../include/mutka.h"
 
 
-
 static char errmsg[MUTKA_ERRMSG_MAX_SIZE+1] = { 0 };
 static size_t errmsg_size = 0;
 static void (*errmsg_callback)(char*, size_t) = NULL;
@@ -97,5 +96,54 @@ void mutka_dump_bytes(char* bytes, size_t size, const char* label) {
     }
 }
 
+
+size_t mutka_get_encoded_buffer_len(size_t decoded_len) {
+    return decoded_len * 2;
+}
+
+size_t mutka_get_decoded_buffer_len(size_t encoded_len) {
+    return encoded_len / 2;
+}
+
+void mutka_encode(struct mutka_str* str, uint8_t* bytes, size_t size) {
+    const char* hex = "0123456789ABCDEF";
+    mutka_str_clear(str);
+
+    uint8_t* ch = &bytes[0];
+    while(ch < bytes + size) {
+        mutka_str_pushbyte(str, hex[(*ch & 0xF0) >> 4 ]);
+        mutka_str_pushbyte(str, hex[(*ch & 0x0F) >> 0 ]);
+        ch++;
+    }
+}
+
+bool mutka_decode(uint8_t* buf, size_t buf_memsize, char* encoded, size_t size) {
+    const size_t decoded_len = mutka_get_decoded_buffer_len(size);
+    if(decoded_len > buf_memsize) {
+        mutka_set_errmsg("%s: Destination buffer memory size is smaller than expected.", __func__);
+        return false;
+    }
+
+    size_t buf_i = 0;
+
+    char bytebuf[2] = { 0 };
+    uint16_t bytebuf_i = 0;
+
+    char* byte = &encoded[0];
+    while(byte < encoded + size) {
+        bytebuf[bytebuf_i] = *byte;
+        bytebuf_i++;
+
+        if(bytebuf_i >= sizeof(bytebuf)) {
+            buf[buf_i++] = strtol(bytebuf, NULL, 16);
+            bytebuf_i = 0;
+            memset(bytebuf, 0, sizeof(bytebuf));
+        }
+        
+        byte++;
+    }
+
+    return true;
+}
 
 

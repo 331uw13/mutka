@@ -38,7 +38,7 @@ void packet_received(struct mutka_client* client) {
 }
 
 bool accept_new_trusted_host(struct mutka_client* client, struct mutka_str* host_publkey) {
-    printf("Save new trusted host public key: %s"
+    printf("Save new trusted host public key: %s\n"
             "(yes/no): ", host_publkey->bytes);
     fflush(stdout);
 

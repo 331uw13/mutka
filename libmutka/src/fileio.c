@@ -72,7 +72,7 @@ bool mutka_file_clear(const char* path) {
 }
 
 
-bool mutka_file_append(const char* path, char* data, size_t size) {
+bool mutka_file_append(const char* path, void* data, size_t size) {
     bool result = false;
     if(!path) {
         goto out;
@@ -173,7 +173,7 @@ out:
 }
 
 
-bool mutka_write_file(const char* path, char* data, size_t size) {
+bool mutka_write_file(const char* path, void* data, size_t size) {
     bool result = false;
     if(!mutka_file_exists(path)) {
         goto out;
