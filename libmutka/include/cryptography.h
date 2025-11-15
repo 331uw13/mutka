@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <openssl/sha.h>
 
 #include "key.h"
 #include "string.h"
@@ -35,7 +36,6 @@ bool mutka_openssl_X25519_keypair(key128bit_t* privkey_out, key128bit_t* publkey
 bool mutka_openssl_ED25519_keypair(key128bit_t* privkey_out, key128bit_t* publkey_out);
 bool mutka_openssl_MLKEM1024_keypair(key_mlkem1024_priv_t* privkey_out, key_mlkem1024_publ_t* publkey_out);
 //bool mutka_openssl_MLDSA87_keypair(key_mldsa87_priv_t* privkey_out, key_mldsa87_publ_t* publkey_out);
-
 
 
 bool mutka_openssl_scrypt
@@ -137,6 +137,9 @@ bool mutka_openssl_ED25519_verify
     size_t data_size
 );
 
+
+// Can be passed to mutka_openssl_MLDSA87_sign() as 'data'
+#define MLDSA87_SIGN_GENERATED_PUBLKEY NULL
 
 bool mutka_openssl_MLDSA87_sign
 (

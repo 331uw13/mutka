@@ -97,7 +97,7 @@ bool mutka_validate_client_cfg(struct mutka_client_cfg* config, char* nickname) 
         goto out;
     }
 
-    if(!config->accept_host_public_key_change_callback) {
+    if(!config->accept_host_signature_change_callback) {
         mutka_set_errmsg("\"accept_host_public_key_change_callback\" is missing.");
         goto out;
     }
@@ -823,6 +823,7 @@ void* mutka_client_recv_thread(void* arg) {
 }
 
 
+/*
 static bool p_mutka_client_save_host_public_key
 (
     struct mutka_client* client,
@@ -856,7 +857,7 @@ out:
     return result;
 }
 
-static bool p_mutka_client_overwrite_host_key
+static bool p_mutka_client_overwrite_host_signature
 (
     char* trusted_hosts_file,
     size_t trusted_hosts_file_size,
@@ -892,11 +893,130 @@ static bool p_mutka_client_overwrite_host_key
 out:
     return result;
 }
+*/
 
-// Process received host ed25519 public key.
-static bool p_mutka_client_process_recv_host_key(struct mutka_client* client) {
+static bool p_mutka_client_save_trusted_host
+(
+    struct mutka_client* client,
+    char* host_tag,
+    size_t host_tag_len,
+    uint8_t* host_signature_hash,
+    uint8_t* host_publkey_hash
+){
+    if(!client->config.accept_new_trusted_host_callback(client, NULL)) {
+        return false;
+    }
+
+    char buffer[SHA512_DIGEST_LENGTH*2 + host_tag_len + 1];
+
+    size_t offset = 0;
+
+    memmove(buffer, host_tag, host_tag_len);
+    offset += host_tag_len;
+
+    memmove(buffer + offset, host_signature_hash, SHA512_DIGEST_LENGTH);
+    offset += SHA512_DIGEST_LENGTH;
+
+    memmove(buffer + offset, host_publkey_hash, SHA512_DIGEST_LENGTH);
+    //offset += SHA512_DIGEST_LENGTH;
+
+    buffer[sizeof(buffer)-1] = '\n';
+
+
+    return mutka_file_append(client->config.trusted_hosts_path, buffer, sizeof(buffer));
+}
+
+static bool p_mutka_client_process_host_signature(struct mutka_client* client) {
     bool result = false;
+ 
+    // "host_addr@host_port:"
+    char host_tag[128] = { 0 };
+    const ssize_t host_tag_len = snprintf(host_tag, sizeof(host_tag)-1, 
+            "%s@%s:", client->host_addr, client->host_port);
 
+    if(host_tag_len <= 0) {
+        mutka_set_errmsg("%s: %s", __func__, strerror(errno));
+        goto out;
+    }
+   
+    struct mutka_str* encoded_host_signature = &client->inpacket.elements[0].data;
+    struct mutka_str* encoded_host_publkey   = &client->inpacket.elements[1].data;
+    
+    signature_mldsa87_t  host_signature;
+    key_mldsa87_publ_t   host_publkey;
+
+    uint8_t host_signature_hash [SHA512_DIGEST_LENGTH] = { 0 };
+    uint8_t host_publkey_hash   [SHA512_DIGEST_LENGTH] = { 0 };
+
+
+    const uint32_t decoded_host_signature_len 
+        = mutka_get_decoded_buffer_len(encoded_host_signature->size);
+
+    const uint32_t decoded_host_publkey_len 
+        = mutka_get_decoded_buffer_len(encoded_host_publkey->size);
+
+
+    if(decoded_host_publkey_len != sizeof(host_publkey.bytes)) {
+        mutka_set_errmsg("%s: Received host public key length doesnt match expected value.", 
+                __func__);
+        goto out;
+    }
+
+    if(decoded_host_signature_len != sizeof(host_signature.bytes)) {
+        mutka_set_errmsg("%s: Received host signature length doesnt match expected value.", 
+                __func__);
+        goto out;
+    }
+
+    if(!mutka_decode(host_publkey.bytes, sizeof(host_publkey.bytes),
+                encoded_host_publkey->bytes,
+                encoded_host_publkey->size)) {
+        mutka_set_errmsg("%s: Failed to decode host public key.", __func__);
+        goto out;
+    }
+
+    if(!mutka_decode(host_signature.bytes, sizeof(host_signature.bytes),
+                encoded_host_signature->bytes,
+                encoded_host_signature->size)) {
+        mutka_set_errmsg("%s: Failed to decode host public key.", __func__);
+        goto out;
+    }
+
+    
+    // Verify the signature before continue.
+    if(!mutka_openssl_MLDSA87_verify(MUTKA_VERSION_STR"(HOST_SIGNATURE)",
+                &host_signature,
+                &host_publkey,
+                (char*)host_publkey.bytes,
+                sizeof(host_publkey.bytes))) {
+        mutka_set_errmsg("Failed to verify host signature.");
+        goto out;
+    }
+
+    printf("\033[32mHost signature verified.\033[0m\n");
+
+
+    SHA512(host_signature.bytes, sizeof(host_signature.bytes), host_signature_hash);
+    SHA512(host_publkey.bytes, sizeof(host_publkey.bytes), host_publkey_hash);
+
+
+    if(mutka_file_size(client->config.trusted_hosts_path) == 0) {
+        result = p_mutka_client_save_trusted_host(
+                client,
+                host_tag, host_tag_len,
+                host_signature_hash,
+                host_publkey_hash);
+        goto out;
+    }
+
+
+
+out:
+    if(!result) {
+        client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
+    }
+    return result;
+    /*
     char* trusted_hosts_file = NULL;
     size_t trusted_hosts_file_size = 0;
     
@@ -975,14 +1095,12 @@ static bool p_mutka_client_process_recv_host_key(struct mutka_client* client) {
         }
 
         if(!key_match) {
-            if(!client->config.accept_host_public_key_change_callback(client, recv_host_publkey)) {
+            if(!client->config.accept_host_signature_change_callback(client, recv_host_publkey)) {
                 goto unmap_and_out;
             }
 
-            if(!p_mutka_client_overwrite_host_key
-                (trusted_hosts_file, trusted_hosts_file_size, host_index, recv_host_publkey)) {
-                goto unmap_and_out;
-            }
+            printf("%s: %s:  Not overwriting signature. (No implementation)\n",
+                    __func__, __FILE__);
         }
         else {
             printf("\033[32mHost key matched\033[0m\n");
@@ -1008,6 +1126,7 @@ unmap_and_out:
 
 out:
     return result;
+    */
 }
 
 void mutka_client_handle_packet(struct mutka_client* client) {
@@ -1029,24 +1148,25 @@ void mutka_client_handle_packet(struct mutka_client* client) {
 
             return;
 
-        case MPACKET_HOST_PUBLIC_KEY: 
-            if(client->inpacket.num_elements != 1) {
-                mutka_set_errmsg("Failed to receive host public key.");
+        case MPACKET_HOST_SIGNATURE: 
+            if(client->inpacket.num_elements != 2) {
+                mutka_set_errmsg("Failed to receive host signature and public key.");
                 return;
             }
 
-            if(!p_mutka_client_process_recv_host_key(client)) {
-                mutka_set_errmsg("Failed to process received host public key.");
-                client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
+            
+            if(!p_mutka_client_process_host_signature(client)) {
                 return;
             }
             
-            mutka_dump_key(&client->host_public_key, "host public key");
+            //mutka_dump_key(&client->host_public_key, "host public key");
 
             mutka_init_metadata_key_exchange(client);
             return;
 
         case MPACKET_EXCHANGE_METADATA_KEYS:
+            printf("MPACKET_EXCHANGE_METADATA_KEYS: NOT IMPLEMENTED\n");
+            /*
             if(client->inpacket.num_elements != 3) {
                 mutka_set_errmsg("Failed to receive complete handshake packet.");
                 return;
@@ -1136,6 +1256,7 @@ void mutka_client_handle_packet(struct mutka_client* client) {
             // to continue to verify client with captcha(if enabled)
             mutka_rpacket_prep(&client->out_raw_packet, MPACKET_HOST_SIGNATURE_OK);
             mutka_send_clear_rpacket(client->socket_fd, &client->out_raw_packet);
+            */
             return;
     }
 

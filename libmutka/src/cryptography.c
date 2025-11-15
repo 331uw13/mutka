@@ -776,6 +776,7 @@ bool mutka_openssl_MLDSA87_sign
     char* data,
     size_t data_size
 ){
+    const bool sign_publkey = (data == MLDSA87_SIGN_GENERATED_PUBLKEY);
     bool result = false;
     EVP_PKEY* pkey = NULL;
     EVP_PKEY_CTX* ctx = NULL;
@@ -818,6 +819,26 @@ bool mutka_openssl_MLDSA87_sign
         OSSL_PARAM_octet_string("context-string", (uint8_t*)context_str, context_strlen),
         OSSL_PARAM_END
     };
+
+
+    if(sign_publkey) {
+        size_t publkey_len = 0;
+
+        if(EVP_PKEY_get_raw_public_key(pkey, NULL, &publkey_len) <= 0) {
+            openssl_error();
+            goto out;
+        }
+
+        data = malloc(publkey_len);
+
+        if(EVP_PKEY_get_raw_public_key(pkey, (uint8_t*)data, &publkey_len) <= 0) {
+            openssl_error();
+            goto out;
+        }
+
+        data_size = publkey_len;
+    }
+
 
 
     size_t signature_len = 0;
@@ -874,6 +895,9 @@ out:
     }
     if(pkey_ctx) {
         EVP_PKEY_CTX_free(pkey_ctx);
+    }
+    if(sign_publkey && data) {
+        free(data);
     }
     
     return result;
@@ -940,4 +964,5 @@ out:
     
     return result;
 }
+
 

@@ -43,8 +43,7 @@ void packet_received(struct mutka_client* client) {
 }
 
 bool accept_new_trusted_host(struct mutka_client* client, struct mutka_str* host_publkey) {
-    printf("Save new trusted host public key: %s\n"
-            "(yes/no): ", host_publkey->bytes);
+    printf("Save new trusted host? (yes/no): ");
     fflush(stdout);
 
     char user_choise = read_user_input_yes_or_no();
@@ -52,16 +51,15 @@ bool accept_new_trusted_host(struct mutka_client* client, struct mutka_str* host
 }
 
 
-bool accept_host_public_key_change(struct mutka_client* client, struct mutka_str* host_publkey) {
+bool accept_host_signature_change(struct mutka_client* client, struct mutka_str* host_publkey) {
     
-    printf("\033[31mWARNING: SERVER SIGNATURE KEY HAS CHANGED!\n"
-            "Received public key: %s"
+    printf("\033[31mWARNING: SERVER SIGNATURE HAS CHANGED!\n"
             "Someone may be trying to tamper with the server keys\n"
             "\n"
             "If you choose \"yes\" the old key will be overwritten and connection can continue (may be risky)\n"
             "If you choose \"no\" you will be disconnected\n"
             "Are you really sure you want to continue?\n\n"
-            "(yes/no): \033[0m", host_publkey->bytes);
+            "(yes/no): \033[0m");
     fflush(stdout);
 
     char user_choise = read_user_input_yes_or_no();
@@ -88,7 +86,7 @@ int main(int argc, char** argv) {
         .use_default_cfgdir = true, // "use /home/user/.mutka/"
 
         .accept_new_trusted_host_callback = accept_new_trusted_host,
-        .accept_host_public_key_change_callback = accept_host_public_key_change
+        .accept_host_signature_change_callback = accept_host_signature_change
     };
 
     if(!mutka_validate_client_cfg(&config, nickname)) {

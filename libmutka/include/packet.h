@@ -7,7 +7,7 @@
 #include "string.h"
 #include "key.h"
 
-#define MUTKA_RAW_PACKET_DEFMEMSIZE (1024 * 8) 
+#define MUTKA_RAW_PACKET_DEFMEMSIZE (1024 * 16) 
 
 
 // Encoding options
@@ -59,7 +59,7 @@ enum mutka_packet_ids : int {
     //
     // If the host signature doesnt exist on client's "trusted_hosts" file
     // 'accept_new_trusted_host_callback()' is called.
-    MPACKET_HOST_SIGNATURE_KEY,
+    MPACKET_HOST_SIGNATURE,
 
     // Client and server will exchange metadata keys
     // for encrypting and decrypting packet metadata.

@@ -51,8 +51,43 @@ static bool p_mutka_server_generate_host_signature
     const char* host_signature_path
 ){
 
+    if(mutka_file_exists(host_signature_path)) {
+        remove(host_signature_path);
+    }
+
+    if(!mutka_openssl_MLDSA87_sign(MUTKA_VERSION_STR"(HOST_SIGNATURE)",
+                &server->host_signature,
+                &server->host_mldsa87_publkey,
+                MLDSA87_SIGN_GENERATED_PUBLKEY, 0)) {
+        return false;
+    }
 
 
+    uint8_t hostfile_data
+        [ sizeof(server->host_signature.bytes) +
+          sizeof(server->host_mldsa87_publkey.bytes)] = { 0 };
+
+    memmove(hostfile_data,
+            server->host_signature.bytes, 
+            sizeof(server->host_signature.bytes));
+
+    memmove(hostfile_data + sizeof(server->host_signature.bytes),
+            server->host_mldsa87_publkey.bytes, 
+            sizeof(server->host_mldsa87_publkey.bytes));
+
+    int fd = creat(host_signature_path, S_IRUSR);
+    if(fd < 0) {
+        mutka_set_errmsg("%s: %s", __func__, strerror(errno));
+        return false;
+    }
+
+    if(write(fd, hostfile_data, sizeof(hostfile_data)) < 0) {
+        mutka_set_errmsg("%s: %s", __func__, strerror(errno));
+        close(fd);
+        return false;
+    }
+   
+    close(fd);
     return true;
 }
 
@@ -73,19 +108,30 @@ static bool p_mutka_server_read_host_signature
         goto out;
     }
     
-    // The signature file contains the public key too.
+    char* hostfile_data = NULL;
+    size_t hostfile_size = 0;
 
-    char* sigfile_data = NULL;
-    size_t sigfile_size = 0;
+    if(!mutka_map_file(host_signature_path, PROT_READ, &hostfile_data, &hostfile_size)) {
+        goto out;
+    }
+
+    size_t offset = 0;
+
+    memmove(server->host_signature.bytes, 
+            hostfile_data,
+            sizeof(server->host_signature.bytes));
+    offset += sizeof(server->host_signature.bytes);
 
 
+    memmove(server->host_mldsa87_publkey.bytes, 
+            hostfile_data + offset,
+            sizeof(server->host_mldsa87_publkey.bytes));
+    //offset += sizeof(server->host_mldsa87_publkey.bytes);
 
 
+    result = true;
+    munmap(hostfile_data, hostfile_size);
 
-
-unmap_and_out:
-
-    munmap(sigfile, sigfile_size);
 
 out:
     return result;
@@ -120,28 +166,15 @@ struct mutka_server* mutka_create_server
             server = NULL;
             goto out;
         }
-    }
 
-    /*
-    if(!p_mutka_server_read_host_keys(server, publkey_path, privkey_path)) {
-       
-        if(!config.accept_host_keygen_callback()) {
-            mutka_set_errmsg("Host ed25519 key generation was cancelled.");
-            free(server);
-            server = NULL;
-            goto out;
-        }
-
-        // Host keys dont exists or they are not valid
-        // Try to generate and save new pair.
-        if(!p_mutka_server_generate_host_keys(server, publkey_path, privkey_path)) {
-            mutka_set_errmsg("Failed to generate new host keys");
+        if(!p_mutka_server_generate_host_signature(server, host_signature_path)) {
+            mutka_set_errmsg("Failed to generate host signature.");
             free(server);
             server = NULL;
             goto out;
         }
     }
-    */
+
 
     server->config = config;
     server->socket_fd = -1;
@@ -292,7 +325,8 @@ static void p_mutka_server_make_client_uid(struct mutka_server* server, struct m
     }
 }
 
-static void mutka_server_handle_client_connect(struct mutka_server* server, struct mutka_client* client) {
+
+static void p_mutka_server_init_connected_client(struct mutka_server* server, struct mutka_client* client) {
     client->env = MUTKA_ENV_SERVER;
     client->uid = rand();
     client->flags = 0;
@@ -302,6 +336,11 @@ static void mutka_server_handle_client_connect(struct mutka_server* server, stru
     MUTKA_CLEAR_KEY(client->metadata_privkey);
     MUTKA_CLEAR_KEY(client->metadata_publkey);
     MUTKA_CLEAR_KEY(client->peer_metadata_publkey);
+}
+
+static void p_mutka_server_handle_client_connect(struct mutka_server* server, struct mutka_client* client) {
+   
+    p_mutka_server_init_connected_client(server, client);
 
     // Lock mutex here or 'accept' in mutka_server_acceptor_thread_func
     // will keep server->mutex locked.
@@ -315,18 +354,17 @@ static void mutka_server_handle_client_connect(struct mutka_server* server, stru
     server->config.client_connected_callback(server, new_client_ptr);
 
 
-    printf("%s: TODO: SEND HOST SIGNATURE and MLDSA87 PUBLIC KEY TO CLIENT\n", __func__);
-
-    /*
-    // Send host public key for client.
-    mutka_rpacket_prep(&server->out_raw_packet, MPACKET_HOST_PUBLIC_KEY);
-    mutka_rpacket_add_ent(&server->out_raw_packet, 
-            "host_public_key",
-            server->host_mldsa87_publkey.bytes,
-            sizeof(server->host_ed25519_publkey.bytes),
+    mutka_rpacket_prep(&server->out_raw_packet, MPACKET_HOST_SIGNATURE);
+    
+    mutka_rpacket_add_ent(&server->out_raw_packet,
+            "host_signature",
+            server->host_signature.bytes, sizeof(server->host_signature.bytes),
             RPACKET_ENCODE);
-    mutka_dump_key(&server->host_ed25519_publkey, "host public key");
-    i*/
+
+    mutka_rpacket_add_ent(&server->out_raw_packet,
+            "host_publkey",
+            server->host_mldsa87_publkey.bytes, sizeof(server->host_mldsa87_publkey.bytes),
+            RPACKET_ENCODE);
 
     mutka_send_clear_rpacket(client->socket_fd, &server->out_raw_packet);
 }
@@ -356,7 +394,7 @@ void* mutka_server_acceptor_thread_func(void* arg) {
             continue;
         }
 
-        mutka_server_handle_client_connect(server, &client);
+        p_mutka_server_handle_client_connect(server, &client);
         pthread_mutex_unlock(&server->mutex);
     }
     return NULL;

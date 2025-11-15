@@ -31,6 +31,7 @@ void mutka_set_errmsg_callback(void(*callback)(char*, size_t));
 bool mutka_socket_rdready_inms(int socket_fd, int timeout_ms);
 void mutka_sleep_ms(int ms);
 
+#define MUTKA_HEX_DUMP(x, label) mutka_dump_bytes(x.bytes, sizeof(x.bytes), label)
 void mutka_dump_strbytes(struct mutka_str* str, const char* label); // For debugging.
 void mutka_dump_bytes(char* bytes, size_t size, const char* label); // For debugging.
 
