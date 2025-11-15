@@ -109,12 +109,11 @@ bool mutka_rpacket_add_ent
 
 
 // This function will encrypt packet data before its sent.
-void mutka_send_rpacket
+void mutka_send_encrypted_rpacket
 (
     int socket_fd,
     struct mutka_raw_packet* packet,
-    key128bit_t* self_metadata_privkey,
-    key128bit_t* peer_metadata_publkey
+    key128bit_t* metadata_shared_key
 );
 
 // IMPORTANT NOTE: 
@@ -122,23 +121,30 @@ void mutka_send_rpacket
 // THIS FUNCTION DOES NOT ENCRYPT ANYTHING.
 void mutka_send_clear_rpacket(int socket_fd, struct mutka_raw_packet* packet);
 
-
-// Automatically allocates more memory for 'mutka_packet->elements'
-// if needed. Returns 'true' on success. 
+// Parse 'raw_packet' into packet's elements.
+// Automatically allocates more memory for 'mutka_packet->elements' if needed.
+// Returns 'true' on success. 
 // On failure 'false' is returned and error can be read with 'mutka_get_errmsg'
 bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* raw_packet);
+
+// Decrypts 'raw_packet' and calls 'mutka_parse_rpacket' if succesful.
+bool mutka_parse_encrypted_rpacket
+(
+    struct mutka_packet* packet,
+    struct mutka_raw_packet* raw_packet,
+    key128bit_t* metadata_shared_key
+);
 
 void mutka_clear_packet(struct mutka_packet* packet);
 
 
 #define M_NONEW_PACKET 1
 #define M_NEW_PACKET_AVAIL 2
-#define M_LOST_CONNECTION 3
-#define M_PACKET_PARSE_ERR 4
+#define M_ENCRYPTED_RPACKET 3
+#define M_LOST_CONNECTION 4
+#define M_PACKET_PARSE_ERR 5
 
-// This function is non blocking and will return following: 
-// M_NONEW_PACKET, M_NEW_PACKET_AVAIL, M_LOST_CONNECTION or M_PACKET_PARSE_ERR.
-//
+// This function is non blocking and will return one of above options.
 // if M_PACKET_PARSE_ERR is returned the error message can be read with mutka_get_errmsg()
 int mutka_recv_incoming_packet(struct mutka_packet* packet, int socket_fd);
 

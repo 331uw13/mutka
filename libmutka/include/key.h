@@ -10,7 +10,15 @@ typedef struct {
 }
 key128bit_t;
 
+typedef struct {
+    uint8_t bytes[3168];
+}
+key_mlkem1024_priv_t;
 
+typedef struct {
+    uint8_t bytes[1568];
+}
+key_mlkem1024_publ_t;
 
 
 #endif

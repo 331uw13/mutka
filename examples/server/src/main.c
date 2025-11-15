@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
+
+#define MUTKA_SERVER
 #include "../../../libmutka/include/mutka.h"
 
 

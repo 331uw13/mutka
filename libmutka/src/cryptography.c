@@ -29,14 +29,13 @@ static void openssl_error_ext(const char* file, const char* func, int line) {
 
 static bool mutka_openssl_keypair_ctx
 (
-    key128bit_t* privkey_out,
-    key128bit_t* publkey_out,
-    EVP_PKEY_CTX* ctx
+    EVP_PKEY_CTX* ctx,
+    const char* caller_func,
+    uint8_t* privkey_out,  const size_t privkey_expected_len,
+    uint8_t* publkey_out,  const size_t publkey_expected_len
 ){
     bool result = false;
-
     EVP_PKEY* pkey = NULL;
-    //EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, NULL);
 
     size_t private_keylen = 0;
     size_t public_keylen = 0;
@@ -67,11 +66,23 @@ static bool mutka_openssl_keypair_ctx
         openssl_error();
         goto out;
     }
-    
+
+    if(private_keylen != privkey_expected_len) {
+        mutka_set_errmsg("%s (called from: %s): Unexpected private key length.",
+                __func__, caller_func);
+        goto out;
+    }
+
+    if(public_keylen != publkey_expected_len) {
+        mutka_set_errmsg("%s (called from: %s): Unexpected public key length.",
+                __func__, caller_func);
+        goto out;
+    }
+
 
     // Get private key bytes.
 
-    if(EVP_PKEY_get_raw_private_key(pkey, privkey_out->bytes, &private_keylen) <= 0) {
+    if(EVP_PKEY_get_raw_private_key(pkey, privkey_out, &private_keylen) <= 0) {
         openssl_error();
         goto out;
     }
@@ -79,7 +90,7 @@ static bool mutka_openssl_keypair_ctx
     
     // Get public key bytes.
 
-    if(EVP_PKEY_get_raw_public_key(pkey, publkey_out->bytes, &public_keylen) <= 0) {
+    if(EVP_PKEY_get_raw_public_key(pkey, publkey_out, &public_keylen) <= 0) {
         openssl_error();
         goto out;
     }
@@ -96,20 +107,30 @@ out:
     }
 
     return result;
-
 }
 
 
 bool mutka_openssl_X25519_keypair(key128bit_t* privkey_out, key128bit_t* publkey_out) {
     EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_X25519, NULL);
-    return mutka_openssl_keypair_ctx(privkey_out, publkey_out, ctx);
+    return mutka_openssl_keypair_ctx(ctx, __func__,
+            privkey_out->bytes, sizeof(privkey_out->bytes),
+            publkey_out->bytes, sizeof(publkey_out->bytes));
 }
-
 
 bool mutka_openssl_ED25519_keypair(key128bit_t* privkey_out, key128bit_t* publkey_out) {
     EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, NULL);
-    return mutka_openssl_keypair_ctx(privkey_out, publkey_out, ctx);
+    return mutka_openssl_keypair_ctx(ctx, __func__,
+            privkey_out->bytes, sizeof(privkey_out->bytes),
+            publkey_out->bytes, sizeof(publkey_out->bytes));
 }
+
+bool mutka_openssl_MLKEM1024_keypair(key_mlkem1024_priv_t* privkey_out, key_mlkem1024_publ_t* publkey_out) {
+    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_from_name(NULL, "ML-KEM-1024", NULL);
+    return mutka_openssl_keypair_ctx(ctx, __func__,
+            privkey_out->bytes, sizeof(privkey_out->bytes),
+            publkey_out->bytes, sizeof(publkey_out->bytes));
+}
+
 
 
 bool mutka_openssl_scrypt(
@@ -301,10 +322,148 @@ out:
     return result;
 }
 
+
+bool mutka_openssl_decaps
+(
+    uint8_t* unwrappedkey_out,
+    size_t   unwrappedkey_out_memsize,
+    size_t*  unwrappedkey_out_len,
+    uint8_t* wrappedkey,
+    size_t   wrappedkey_len,
+    key_mlkem1024_priv_t* self_privkey
+){
+    bool result = false;
+    EVP_PKEY_CTX* pkey_ctx = NULL;
+    EVP_PKEY_CTX* ctx = NULL;
+    EVP_PKEY* pkey = NULL;
+
+    pkey_ctx = EVP_PKEY_CTX_new_from_name(NULL, "ML-KEM-1024", NULL);
+    if(!pkey_ctx) {
+        openssl_error();
+        goto out;
+    }
+
+    OSSL_PARAM pkey_params[] = {
+        OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PRIV_KEY, (void*)self_privkey->bytes, sizeof(self_privkey->bytes)),
+        OSSL_PARAM_construct_end()
+    };
+
+    if(!EVP_PKEY_fromdata_init(pkey_ctx)) {
+        openssl_error();
+        goto out;
+    }
+    if(!EVP_PKEY_fromdata(pkey_ctx, &pkey, EVP_PKEY_PRIVATE_KEY, pkey_params)) {
+        openssl_error();
+        goto out;
+    }
+
+    ctx = EVP_PKEY_CTX_new(pkey, NULL);
+
+    size_t unwrappedkey_len = unwrappedkey_out_memsize;
+
+    if(!EVP_PKEY_decapsulate_init(ctx, NULL)) {
+        openssl_error();
+        goto out;
+    }
+
+    if(!EVP_PKEY_decapsulate(ctx,
+                unwrappedkey_out, &unwrappedkey_len,
+                wrappedkey, wrappedkey_len)) {
+        openssl_error();
+        goto out;
+    }
+
+    *unwrappedkey_out_len = unwrappedkey_len;
+
+    result = true;
+
+out:
+    if(ctx) {
+        EVP_PKEY_CTX_free(ctx);
+    }
+    if(pkey_ctx) {
+        EVP_PKEY_CTX_free(pkey_ctx);
+    }
+    if(pkey) {
+        EVP_PKEY_free(pkey);
+    }
+
+    return result;
+}
+
+bool mutka_openssl_encaps
+(
+    uint8_t*  wrappedkey_out,
+    size_t    wrappedkey_out_memsize,
+    size_t*   wrappedkey_out_len,
+    key128bit_t* sharedsecret_out,
+    key_mlkem1024_publ_t* peer_publkey
+){
+    bool result = false;
+    EVP_PKEY_CTX* pkey_ctx = NULL;
+    EVP_PKEY_CTX* ctx = NULL;
+    EVP_PKEY* pkey = NULL;
+
+    pkey_ctx = EVP_PKEY_CTX_new_from_name(NULL, "ML-KEM-1024", NULL);
+    if(!pkey_ctx) {
+        openssl_error();
+        goto out;
+    }
+
+    OSSL_PARAM pkey_params[] = {
+        OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PUB_KEY, (void*)peer_publkey->bytes, sizeof(peer_publkey->bytes)),
+        OSSL_PARAM_construct_end()
+    };
+
+    if(!EVP_PKEY_fromdata_init(pkey_ctx)) {
+        openssl_error();
+        goto out;
+    }
+    if(!EVP_PKEY_fromdata(pkey_ctx, &pkey, EVP_PKEY_PUBLIC_KEY, pkey_params)) {
+        openssl_error();
+        goto out;
+    }
+
+    ctx = EVP_PKEY_CTX_new(pkey, NULL);
+
+
+    size_t wrappedkey_len = wrappedkey_out_memsize;
+    size_t shared_secret_len = sizeof(sharedsecret_out->bytes);
+
+    if(!EVP_PKEY_encapsulate_init(ctx, NULL)) {
+        openssl_error();
+        goto out;
+    }
+
+    if(!EVP_PKEY_encapsulate(ctx, 
+                wrappedkey_out, &wrappedkey_len,
+                sharedsecret_out->bytes, &shared_secret_len)) {
+        openssl_error();
+        goto out;
+    }
+
+    *wrappedkey_out_len = wrappedkey_len;
+
+    result = true;
+
+out:
+    if(ctx) {
+        EVP_PKEY_CTX_free(ctx);
+    }
+    if(pkey_ctx) {
+        EVP_PKEY_CTX_free(pkey_ctx);
+    }
+    if(pkey) {
+        EVP_PKEY_free(pkey);
+    }
+
+    return result;
+}
+
 bool mutka_openssl_AES256GCM_encrypt
 (
     struct mutka_str* cipher_out,
-    struct mutka_str* tag_out,
+    uint8_t* gcm_tag_out,
     uint8_t* gcm_key,
     uint8_t* gcm_iv,
     char*    gcm_aad,
@@ -387,7 +546,15 @@ bool mutka_openssl_AES256GCM_encrypt
         goto out;
     }
 
-    mutka_str_reserve(tag_out, AESGCM_TAG_LEN);
+
+    params[0] = OSSL_PARAM_construct_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, gcm_tag_out, AESGCM_TAG_LEN);
+    if(!EVP_CIPHER_CTX_get_params(ctx, params)) {
+        openssl_error();
+        goto out;
+    }
+
+    /*
+    //mutka_str_reserve(tag_out, AESGCM_TAG_LEN);
 
     params[0] = OSSL_PARAM_construct_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, tag_out->bytes, AESGCM_TAG_LEN);
     if(!EVP_CIPHER_CTX_get_params(ctx, params)) {
@@ -395,8 +562,8 @@ bool mutka_openssl_AES256GCM_encrypt
         goto out;
     }
 
-    tag_out->size = AESGCM_TAG_LEN;
-
+    //tag_out->size = AESGCM_TAG_LEN;
+    */
 
     result = true;
 
@@ -592,70 +759,4 @@ out:
     return result;
 }
 
-/*
-uint32_t mutka_get_base64_encoded_length(uint32_t decoded_len) {
-    return (uint32_t)(((decoded_len + 2) / 3) * 4);
-}
 
-uint32_t mutka_get_base64_decoded_length(char* encoded, uint32_t encoded_len) {
-    if(encoded_len == 0) {
-        return 0;
-    }
-    
-    int num_padding = 0;
-    char* ch = &encoded[encoded_len-1];
-    while(ch > &encoded[0]) {
-        if(*ch == '=') {
-            num_padding++;
-            if(num_padding >= 2) {
-                break;
-            }
-        }
-        ch--;
-    }
-    return (uint32_t)((encoded_len / 4) * 3 - num_padding);
-}
-
-bool mutka_openssl_BASE64_encode_tostr(struct mutka_str* output, char* encoded, size_t encoded_size) {
-    size_t encoded_length = mutka_get_base64_encoded_length(encoded_size);
-    
-    mutka_str_clear(output);
-    mutka_str_reserve(output, encoded_length);
-
-    int result = EVP_EncodeBlock((uint8_t*)output->bytes, (uint8_t*)encoded, encoded_size);
-    if(result < 0) {
-        openssl_error();
-        return false;
-    }
-
-    output->size = encoded_length;
-    return true;
-}
-
-size_t mutka_openssl_BASE64_decode_tobuf(void* buffer, size_t buffer_memsize, char* encoded, size_t encoded_size) {
-    
-    size_t decoded_length = mutka_get_base64_decoded_length(encoded, encoded_size);
-    if(decoded_length > buffer_memsize) {
-        mutka_set_errmsg("%s: Destination buffer memory size is smaller than expected. (dst: %li, src: %li)", 
-                __func__, buffer_memsize, decoded_length);
-        return 0;
-    }
-
-    int result = EVP_DecodeBlock((uint8_t*)buffer, (uint8_t*)encoded, encoded_size);
-    if(result < 0) {
-        openssl_error();
-        decoded_length = 0;
-    }
-    
-    return decoded_length;
-}
-
-bool mutka_openssl_BASE64_decode_tostr(struct mutka_str* output, char* encoded, size_t encoded_size) {
-    mutka_str_clear(output);
-    mutka_str_reserve(output, mutka_get_base64_decoded_length(encoded, encoded_size)+1);
-
-    output->size = mutka_openssl_BASE64_decode_tobuf(output->bytes, output->memsize, encoded, encoded_size);
-
-    return (output->size > 0);
-}
-*/

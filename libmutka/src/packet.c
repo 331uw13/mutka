@@ -11,7 +11,7 @@
 #include "../include/memory.h"
 #include "../include/cryptography.h"
 
-#define DEBUG
+//#define DEBUG
 
 
 
@@ -141,58 +141,38 @@ out:
 }
 
 
+static bool p_mutka_add_packet_expected_size(struct mutka_raw_packet* rpacket) {
+    if(rpacket->has_write_error) {
+        return false;
+    }
+
+    if(rpacket->size + sizeof(rpacket->size) >= rpacket->memsize) {
+        mutka_set_errmsg("Packet is too large to be sent.");
+        return false ;
+    }
+
+    rpacket->size += sizeof(rpacket->size);
+
+    // Make room for expected packet size.
+    memmove(rpacket->data + sizeof(rpacket->size), rpacket->data, rpacket->size);
+        
+    // Add packet size.
+    memmove(rpacket->data, &rpacket->size, sizeof(rpacket->size));
+
+    return true;
+}
+
 
 void mutka_send_clear_rpacket(int socket_fd, struct mutka_raw_packet* packet) {
     if(packet->has_write_error) {
         return;
     }
 
-    if(packet->size + sizeof(packet->size) >= packet->memsize) {
-        mutka_set_errmsg("Packet is too large to be sent.");
+    if(!p_mutka_add_packet_expected_size(packet)) {
         return;
     }
 
-    packet->size += sizeof(packet->size);
-
-    // Make room for expected packet size.
-    memmove(packet->data + sizeof(packet->size), packet->data, packet->size);
-        
-    // Add packet size.
-    memmove(packet->data, &packet->size, sizeof(packet->size));
-
-#ifdef DEBUG
-    printf("\n\033[90m-------------------------------------------\033[0m\n");
-    printf("SENT PACKET:\n");
-    printf("\033[34m");
-    int _column_count = 0;
-    for(uint32_t i = 0; i < packet->size; i++) {
-        printf("%02X ", (uint8_t)packet->data[i]);
-        _column_count++;
-
-        if(_column_count > 24) {
-            printf("\n");
-            _column_count = 0;
-        }
-    }
-    if(_column_count > 0) {
-        printf("\n");
-    }
-    printf("\033[90m-------------------------------------------\033[0m\n");
-#endif
-
-
     send(socket_fd, packet->data, packet->size, 0);
-}
-
-void mutka_send_rpacket
-(
-    int socket_fd,
-    struct mutka_raw_packet* packet,
-    key128bit_t* self_metadata_privkey,
-    key128bit_t* peer_metadata_publkey
-){
-
-    printf("%s\n", __func__);
 }
 
 
@@ -242,29 +222,6 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
         return false;
     }
 
-#ifdef DEBUG
-
-    printf("\n\033[90m-------------------------------------------\033[0m\n");
-    printf("RECEIVED PACKET:\n");
-    printf("\033[35m");
-    int _column_count = 0;
-    for(uint32_t i = 0; i < raw_packet->size; i++) {
-        printf("%02X ", (uint8_t)raw_packet->data[i]);
-        _column_count++;
-        if(_column_count > 24) {
-            printf("\n");
-            _column_count = 0;
-        }
-    }
-    if(_column_count > 0) {
-        printf("\n");
-    }
-    printf("\033[90m-------------------------------------------\033[0m\n");
-
-#endif
-    // Format: packet_size, packet_id, entry:data|entry:data|entry:data ...
-
-
     mutka_clear_packet(packet);
   
     size_t header_size = 0;
@@ -276,7 +233,7 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
     header_size += sizeof(packet->id);
 
     if(packet->id >= MUTKA_NUM_PACKETS) {
-        mutka_set_errmsg("Packet has invalid ID or it was not set.");
+        mutka_set_errmsg("Packet has invalid id or it was not set.");
         return false;
     }
     
@@ -322,6 +279,11 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
                 if(!p_mutka_packet_memcheck(packet)) {
                     return false;
                 }
+    
+                if(curr_elem->encoding == RPACKET_ENCODE_NONE) {
+                    mutka_str_nullterm(&curr_elem->data);
+                }
+                
                 packet->num_elements++;
                 curr_elem = &packet->elements[packet->num_elements];
                 ch++;
@@ -331,18 +293,197 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
             mutka_str_pushbyte(&curr_elem->data, *ch);
             ch++;
         }
-
-        printf("packet->num_elems = %li | packet->num_elems_alloc = %li\n",
-                packet->num_elements, packet->num_elems_allocated);
-        
-        if(curr_elem->encoding == RPACKET_ENCODE_NONE) {
-            mutka_str_pushbyte(&curr_elem->data, 0);
-        }
     }
 
-    printf("PACKET PARSED OK!\n");
     return true;
 }
+
+
+void mutka_send_encrypted_rpacket
+(
+    int socket_fd,
+    struct mutka_raw_packet* packet,
+    key128bit_t* metadata_shared_key
+){
+    if(packet->has_write_error) {
+        return;
+    }
+
+    if(!p_mutka_add_packet_expected_size(packet)) {
+        return;
+    }
+
+    struct mutka_str cipher;
+    struct mutka_str out;
+    struct mutka_str encoded;
+
+    uint8_t gcm_tag[AESGCM_TAG_LEN] = { 0 };
+    uint8_t gcm_iv[AESGCM_IV_LEN] = { 0 };
+    RAND_bytes(gcm_iv, sizeof(gcm_iv));
+
+
+    mutka_str_alloc(&cipher);
+    mutka_str_alloc(&out);
+    mutka_str_alloc(&encoded);
+
+    if(!mutka_openssl_AES256GCM_encrypt(
+                &cipher,
+                gcm_tag,
+                metadata_shared_key->bytes,
+                gcm_iv,
+                MUTKA_VERSION_STR,
+                MUTKA_VERSION_STR_LEN,
+                packet->data,
+                packet->size)) {
+        mutka_set_errmsg("%s: Failed to encrypt packet.", __func__);
+        goto free_and_out;
+    }
+
+    //mutka_str_append(&out, MUTKA_VERSION_STR, MUTKA_VERSION_STR_LEN);
+    mutka_str_append(&out, (char*)gcm_iv,  sizeof(gcm_iv));
+    mutka_str_append(&out, (char*)gcm_tag, sizeof(gcm_tag));
+    mutka_str_append(&out, cipher.bytes, cipher.size);
+
+    mutka_encode(&encoded, (uint8_t*)out.bytes, out.size);
+   
+    const int64_t tail = MUTKA_ENCRYPTED_PACKET_TAIL;
+    mutka_str_append(&encoded, (char*)&tail, sizeof(tail));
+
+    send(socket_fd, encoded.bytes, encoded.size, 0);
+
+
+free_and_out:
+    mutka_str_free(&cipher);
+    mutka_str_free(&out);
+    mutka_str_free(&encoded);
+}
+
+static bool p_is_encrypted_raw_packet(struct mutka_raw_packet* rpacket) {
+    if(rpacket->size < MUTKA_ENCRYPTED_PACKET_TAIL_NBYTES) {
+        return false;
+    }
+
+    int64_t tail = 0;
+    memmove(&tail, 
+            rpacket->data + (rpacket->size - MUTKA_ENCRYPTED_PACKET_TAIL_NBYTES),
+            MUTKA_ENCRYPTED_PACKET_TAIL_NBYTES);
+
+    return (tail == MUTKA_ENCRYPTED_PACKET_TAIL);
+}
+
+
+// Decrypts 'raw_packet' and calls 'mutka_parse_rpacket' if succesful.
+bool mutka_parse_encrypted_rpacket
+(
+    struct mutka_packet* packet,
+    struct mutka_raw_packet* raw_packet,
+    key128bit_t* metadata_shared_key
+){
+    bool result = false;
+
+    if(!p_is_encrypted_raw_packet(raw_packet)) {
+        mutka_set_errmsg("%s: Encrypted packet doesnt contain expected tail.", __func__);
+        goto out;
+    }
+
+    raw_packet->size -= MUTKA_ENCRYPTED_PACKET_TAIL_NBYTES;
+
+    struct mutka_str plain_packet;
+    mutka_str_alloc(&plain_packet);
+
+    const size_t decoded_packet_size = mutka_get_decoded_buffer_len(raw_packet->size);
+    uint8_t* decoded_packet = calloc(decoded_packet_size, sizeof *decoded_packet);
+
+    if(!mutka_decode(
+                decoded_packet,
+                decoded_packet_size,
+                raw_packet->data,
+                raw_packet->size)) {
+        mutka_set_errmsg("%s: Failed to decode cipher text.", __func__);
+        goto free_and_out;
+    }
+
+
+    size_t offset = 0;
+
+    uint8_t gcm_iv[AESGCM_IV_LEN] = { 0 };
+    char    gcm_tag[AESGCM_TAG_LEN] = { 0 };
+
+    // Read GCM IV.
+    if(offset + sizeof(gcm_iv) >= decoded_packet_size) {
+        mutka_set_errmsg("%s: Encrypted packet is smaller than expected. Missing gcm_iv, gcm_tag and cipher text.",
+                __func__);
+        goto free_and_out;
+    }
+    memmove(gcm_iv, decoded_packet + offset, sizeof(gcm_iv));
+    offset += sizeof(gcm_iv);
+
+
+    // Read GCM TAG.
+    if(offset + sizeof(gcm_tag) >= decoded_packet_size) {
+        mutka_set_errmsg("%s: Encrypted packet is smaller than expected. Missing gcm_tag and cipher text.",
+                __func__);
+        goto free_and_out;
+    }
+    memmove(gcm_tag, decoded_packet + offset, sizeof(gcm_tag));
+    offset += sizeof(gcm_tag);
+
+
+    const int64_t remaining = (decoded_packet_size - offset);
+
+    // Should never be true but maybe good idea to check just in case.
+    if(remaining <= 0) {
+        mutka_set_errmsg("%s: Encrypted packet is smaller than expected. Missing cipher text.",
+                __func__);
+        goto free_and_out;
+    }
+
+    if(remaining > 1024*16) {
+        mutka_set_errmsg("%s: Remaining cipher text seems to be too large to accept.", __func__);
+        goto free_and_out;
+    }
+   
+    if((decoded_packet + offset) + remaining > decoded_packet + decoded_packet_size) {
+        mutka_set_errmsg("%s: Would overflow. (decoded_packet + offset) + remaining > decoded_packet + decoded_packet_size");
+        goto free_and_out;
+    }
+
+    if(!mutka_openssl_AES256GCM_decrypt(
+                &plain_packet,
+                metadata_shared_key->bytes,
+                gcm_iv,
+                MUTKA_VERSION_STR,
+                MUTKA_VERSION_STR_LEN,
+                gcm_tag,
+                sizeof(gcm_tag),
+                (char*)(decoded_packet + offset),
+                remaining)) {
+        mutka_set_errmsg("%s: Failed to decrypt packet.", __func__);
+        goto free_and_out;
+    }
+
+
+    if(plain_packet.size >= raw_packet->memsize) {
+        mutka_set_errmsg("%s: Decrypted packet size seems to be too large.", __func__);
+        goto free_and_out;
+    }
+
+    // Move the decrypted packet data into raw_packet
+    // It can then be parsed normally.
+
+    memmove(raw_packet->data, plain_packet.bytes, plain_packet.size);
+    raw_packet->size = plain_packet.size;
+
+    result = mutka_parse_rpacket(packet, raw_packet);
+
+
+free_and_out:
+    mutka_str_free(&plain_packet);
+    free(decoded_packet);
+out:
+    return result;
+}
+
 
 
 int mutka_recv_incoming_packet(struct mutka_packet* packet, int socket_fd) {
@@ -358,8 +499,13 @@ int mutka_recv_incoming_packet(struct mutka_packet* packet, int socket_fd) {
     if(recv_result <= 0) {
         return M_LOST_CONNECTION;
     }
-
+    
     packet->raw_packet.size = recv_result;
+
+    if(p_is_encrypted_raw_packet(&packet->raw_packet)) {
+        return M_ENCRYPTED_RPACKET;
+    }
+
     if(!mutka_parse_rpacket(packet, &packet->raw_packet)) {
         return M_PACKET_PARSE_ERR;
     }

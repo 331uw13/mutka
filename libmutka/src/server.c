@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <openssl/rand.h>
 
 #define MUTKA_SERVER
 #include "../include/server.h"
@@ -506,31 +507,29 @@ void* mutka_server_recvdata_thread_func(void* arg) {
 static void p_mutka_server_send_captcha_challenge(struct mutka_server* server, struct mutka_client* client) {
     printf("%s\n", __func__);
 
-/*
-    memset(client->expected_captcha_answer, 0, sizeof(client->expected_captcha_answer));
+    memset(client->exp_captcha_answer, 0, sizeof(client->exp_captcha_answer));
 
     size_t captcha_buffer_len = 0;
-    char* captcha_buffer = get_random_captcha_buffer(&captcha_buffer_len, 
-            client->expected_captcha_answer,
-            sizeof(client->expected_captcha_answer) - 1);
-
-    printf("%s\n", captcha_buffer);
-
+    char* captcha_buffer = get_random_captcha_buffer
+    (
+        &captcha_buffer_len,
+        client->exp_captcha_answer,
+        sizeof(client->exp_captcha_answer) - 1
+    );
 
     mutka_rpacket_prep(&server->out_raw_packet, MPACKET_CAPTCHA);
-    mutka_rpacket_add_ent(&server->out_raw_packet, 
-            "buffer",
+    mutka_rpacket_add_ent(&server->out_raw_packet,
+            "captcha",
             captcha_buffer,
             captcha_buffer_len,
             RPACKET_ENCODE_NONE);
 
-    mutka_send_rpacket(client->socket_fd,
+    mutka_send_encrypted_rpacket(client->socket_fd,
             &server->out_raw_packet,
-            &client->metadata_keys.private_key,
-            &client->peer_metadata_publkey);
+            &client->metadata_shared_key);
 
     free(captcha_buffer);
-    */
+
 }
 
 void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client* client) {
@@ -541,7 +540,7 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
     switch(server->inpacket.id) {
 
         case MPACKET_HOST_SIGNATURE_FAILED:
-            mutka_set_errmsg("Client %i COULD NOT VERIFY HOST SIGNATURE!", client->uid);
+            mutka_set_errmsg("CLIENT %i COULD NOT VERIFY HOST SIGNATURE!", client->uid);
             return;
 
         case MPACKET_HOST_SIGNATURE_OK:
@@ -563,7 +562,6 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
                 
                 struct mutka_packet_elem* key_elem = &server->inpacket.elements[0];
                 struct mutka_packet_elem* nonce_elem = &server->inpacket.elements[1];
-
                 uint8_t client_nonce[16] = { 0 };
 
                 if(!mutka_decode(
@@ -571,6 +569,7 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
                             sizeof(client->peer_metadata_publkey.bytes),
                             key_elem->data.bytes,
                             key_elem->data.size)) {
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to decode metadata public key.");
                     return;
                 }
 
@@ -579,14 +578,15 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
                             sizeof(client_nonce),
                             nonce_elem->data.bytes,
                             nonce_elem->data.size)) {
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to decode client nonce.");
                     return;
                 }
 
                 if(!mutka_openssl_ED25519_sign(&signature,
                             &server->host_ed25519_privkey,
-                            client_nonce,
+                            (char*)client_nonce,
                             sizeof(client_nonce))) {
-                    mutka_set_errmsg("%s: Failed create signature. (MPACKET_EXCHANGE_METADATA_KEYS)", __func__);
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed create signature.", __func__);
                     return;
                 }
 
@@ -599,6 +599,31 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
 
                 mutka_dump_key(&client->metadata_publkey, "client metadata publkey (SERVER SIDE)");
                 mutka_dump_key(&client->peer_metadata_publkey, "peer metadata publkey");
+
+
+                uint8_t hkdf_salt[HKDF_SALT_LEN] = { 0 };
+                char hkdf_info[64] = { 0 };
+                if(!mutka_get_hkdf_info(hkdf_info, sizeof(hkdf_info), HKDFCTX_METADATA_KEYS)) {
+                    return;
+                }
+
+                RAND_bytes(hkdf_salt, sizeof(hkdf_salt));
+
+                if(!mutka_openssl_derive_shared_key(
+                            &client->metadata_shared_key,
+                            &client->metadata_privkey,
+                            &client->peer_metadata_publkey,
+                            hkdf_salt,
+                            sizeof(hkdf_salt),
+                            hkdf_info)) {
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to derive shared metadata key for client %i",
+                            client->uid);
+                    return;
+                }
+
+                mutka_dump_key(&client->metadata_shared_key, "metadata_shared_key");
+
+                // Derive shared metadata key.
 
                 mutka_rpacket_prep(&server->out_raw_packet, MPACKET_EXCHANGE_METADATA_KEYS);
                 mutka_rpacket_add_ent(&server->out_raw_packet,
@@ -613,71 +638,14 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
                         sizeof(signature.bytes),
                         RPACKET_ENCODE);
 
+                mutka_rpacket_add_ent(&server->out_raw_packet,
+                        "hkdf_salt",
+                        hkdf_salt,
+                        sizeof(hkdf_salt),
+                        RPACKET_ENCODE);
+
                 mutka_send_clear_rpacket(client->socket_fd, &server->out_raw_packet);
-
             }
-            return;
-
-
-
-            /*
-            struct mutka_str signature;
-            struct mutka_str decoded_client_nonce;
-            mutka_str_alloc(&decoded_client_nonce);
-            mutka_str_alloc(&signature);
-            */
-            
-            /*
-            mutka_openssl_BASE64_decode(&client->peer_metadata_publkey,
-                    key_elem->data.bytes,
-                    key_elem->data.size);
-
-            mutka_openssl_BASE64_decode(&decoded_client_nonce,
-                    nonce_elem->data.bytes,
-                    nonce_elem->data.size);
-
-            if(!mutka_openssl_ED25519_sign(&signature,
-                        &server->host_ed25519_privkey,
-                        decoded_client_nonce.bytes,
-                        decoded_client_nonce.size)) {
-                mutka_set_errmsg("%s: Failed create signature. (MPACKET_EXCHANGE_METADATA_KEYS)", __func__);
-                mutka_str_free(&signature);
-                mutka_str_free(&decoded_client_nonce);
-                return;
-            }
-
-
-            // Generate X25519 keypair for the client which will be stored on the server.
-            // See packet.h for more information about metadata keys.
-            mutka_openssl_X25519_keypair(&client->metadata_keys);
-            
-            mutka_dump_strbytes(&client->peer_metadata_publkey, "peer metadata publkey");
-            mutka_dump_strbytes(&client->metadata_keys.public_key, "client(server side) metadata publkey");
-
-
-            mutka_rpacket_prep(&server->out_raw_packet, MPACKET_EXCHANGE_METADATA_KEYS);
-            mutka_rpacket_add_ent(&server->out_raw_packet,
-                    "metadata_publkey", 
-                    client->metadata_keys.public_key.bytes,
-                    client->metadata_keys.public_key.size,
-                    RPACKET_ENCODE_BASE64);
-
-            mutka_dump_strbytes(&signature, "signature");
-            mutka_rpacket_add_ent(&server->out_raw_packet,
-                    "signature",
-                    signature.bytes,
-                    signature.size,
-                    RPACKET_ENCODE_BASE64);
-
-
-            mutka_str_free(&signature);
-            mutka_str_free(&decoded_client_nonce);
-            mutka_send_clear_rpacket(client->socket_fd, &server->out_raw_packet);
-    
-            client->flags |= MUTKA_SCFLG_MDKEYS_EXCHANGED;
-    
-            printf("MPACKET_METADATA_KEY_EXCHANGE\n");
-            */
             return;
     }
 
