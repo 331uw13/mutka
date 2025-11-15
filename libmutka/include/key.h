@@ -20,5 +20,15 @@ typedef struct {
 }
 key_mlkem1024_publ_t;
 
+typedef struct {
+    uint8_t bytes[2592];
+}
+key_mldsa87_publ_t;
+
+typedef struct {
+    uint8_t bytes[4896];
+}
+key_mldsa87_priv_t;
+
 
 #endif

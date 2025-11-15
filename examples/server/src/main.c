@@ -32,13 +32,8 @@ void packet_received(struct mutka_server* server, struct mutka_client* client) {
 
 }
 
-bool accept_host_keygen() {
-    printf("\033[33m"
-            "Host ed25519 keypair doesnt exist or they are not valid.\n"
-            "Server is about to generate new signature keypair for itself.\n"
-            "If the host signature keys change and old clients connect back\n"
-            "they will see a warning about this.\n\n"
-            "Accept? (yes/no): \033[0m");
+bool accept_host_signaturegen() {
+    printf("\033[33mGenerate new server signature? (yes/no): \033[0m");
     fflush(stdout);
 
     char input[6] = { 0 };
@@ -55,7 +50,7 @@ int main() {
         .max_clients = 8,
         .flags = (MUTKA_SERVER_REUSEADDR | MUTKA_SERVER_ENABLE_CAPTCHA),
 
-        .accept_host_keygen_callback    = accept_host_keygen,
+        .accept_host_signaturegen_callback  = accept_host_signaturegen,
         .client_connected_callback      = client_connected,
         .client_disconnected_callback   = client_disconnected,
         .packet_received_callback       = packet_received
@@ -63,11 +58,12 @@ int main() {
     
     mutka_set_errmsg_callback(mutka_error);
 
+    printf("sizeof(struct mutka_server) = %li\n", sizeof(struct mutka_server));
+    printf("sizeof(struct mutka_client) = %li\n", sizeof(struct mutka_client));
+
 
     // host's ED25519 are generated if they dont exist.
-    struct mutka_server* server = mutka_create_server(config, 
-            "./host_ed25519_public_key", 
-            "./host_ed25519_private_key");
+    struct mutka_server* server = mutka_create_server(config, "./host_signature");
 
     if(!server) {
         return 1;

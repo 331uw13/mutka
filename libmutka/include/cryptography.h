@@ -12,6 +12,11 @@ typedef struct {
 }
 signature_t;
 
+typedef struct {
+    uint8_t bytes[4627];
+}
+signature_mldsa87_t;
+
 
 // TODO: Refactor to use inline function.
 #define MUTKA_CLEAR_KEY(key) memset(key.bytes, 0, sizeof(key.bytes))
@@ -29,6 +34,9 @@ void mutka_dump_sig(signature_t* sig, const char* label); //
 bool mutka_openssl_X25519_keypair(key128bit_t* privkey_out, key128bit_t* publkey_out);
 bool mutka_openssl_ED25519_keypair(key128bit_t* privkey_out, key128bit_t* publkey_out);
 bool mutka_openssl_MLKEM1024_keypair(key_mlkem1024_priv_t* privkey_out, key_mlkem1024_publ_t* publkey_out);
+//bool mutka_openssl_MLDSA87_keypair(key_mldsa87_priv_t* privkey_out, key_mldsa87_publ_t* publkey_out);
+
+
 
 bool mutka_openssl_scrypt
 (
@@ -112,6 +120,7 @@ bool mutka_openssl_AES256GCM_decrypt
     size_t    cipher_bytes_size
 );
 
+
 bool mutka_openssl_ED25519_sign
 (
     signature_t* signature,
@@ -128,6 +137,24 @@ bool mutka_openssl_ED25519_verify
     size_t data_size
 );
 
+
+bool mutka_openssl_MLDSA87_sign
+(
+    const char* context_str,
+    signature_mldsa87_t* signature,
+    key_mldsa87_publ_t* verifykey_out,
+    char* data,
+    size_t data_size
+);
+
+bool mutka_openssl_MLDSA87_verify
+(
+    const char* context_str,
+    signature_mldsa87_t* signature,
+    key_mldsa87_publ_t* verifykey,
+    char* data,
+    size_t data_size
+);
 
 
 #endif

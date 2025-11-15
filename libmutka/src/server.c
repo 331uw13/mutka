@@ -14,11 +14,6 @@
 
 #include "../include/ascii_captcha.h"
 
-// DONT CHANGE AFTER SERVER HAS GENERATED ITS HOST KEYS.
-// Used to identify the key file.
-#define HOST_ED25519_PRIVKEY_HEADER_TAG "HOST_PRIVKEY"
-#define HOST_ED25519_PUBLKEY_HEADER_TAG "HOST_PUBLKEY"
-
 
 static struct server_global {
     pthread_t acceptor_thread;
@@ -49,173 +44,48 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
 
 
 
-static bool p_mutka_server_save_host_key
-(
-    const char* path,
-    const char* header_tag,
-    key128bit_t* key
-){
-    if(creat(path, S_IRUSR | S_IWUSR) < 0) {
-        mutka_set_errmsg("Failed to create file \"%s\" | %s", path, strerror(errno));
-        return false;
-    }
 
-    if(!mutka_file_append(path, (char*)header_tag, strlen(header_tag))) {
-        mutka_set_errmsg("Failed to save \"%s\" (File header tag) | %s", 
-                header_tag, strerror(errno));
-        return false;
-    }
-    if(!mutka_file_append(path, key->bytes, sizeof(key->bytes))) { 
-        mutka_set_errmsg("Failed to save \"%s\" | %s",
-                header_tag, strerror(errno));
-        return false;
-    }
-    return true;
-}
-
-static bool p_mutka_server_validate_keyfile
-(
-    char* file_data,
-    const char* expected_header_tag,
-    const size_t header_tag_len
-){
-    for(size_t i = 0; i < header_tag_len; i++) {
-        if(file_data[i] != expected_header_tag[i]) {
-            mutka_set_errmsg("Host ed25519 key file header tag is changed or corrupted after it was created. "
-                    "Expected \"%s\"", expected_header_tag);
-            return false;
-        }
-    }
-    return true;
-}
-
-static bool p_mutka_server_generate_host_keys
+static bool p_mutka_server_generate_host_signature
 (
     struct mutka_server* server,
-    const char* publkey_path,
-    const char* privkey_path
+    const char* host_signature_path
 ){
-    if(!mutka_openssl_ED25519_keypair(&server->host_ed25519_privkey, &server->host_ed25519_publkey)) {
-        mutka_set_errmsg("mutka_openssl_ED25519_keypair() Failed.");
-        return false;
-    }
 
-    if(mutka_file_exists(publkey_path)) {
-        remove(publkey_path);
-    }
 
-    if(mutka_file_exists(privkey_path)) {
-        remove(privkey_path);
-    }
-
-    if(!p_mutka_server_save_host_key(publkey_path, 
-                HOST_ED25519_PUBLKEY_HEADER_TAG, 
-                &server->host_ed25519_publkey)) {
-        return false;
-    }
-
-    if(!p_mutka_server_save_host_key(privkey_path, 
-                HOST_ED25519_PRIVKEY_HEADER_TAG, 
-                &server->host_ed25519_privkey)) {
-        return false;
-    }
-
-    chmod(publkey_path, S_IRUSR);
-    chmod(privkey_path, S_IRUSR);
 
     return true;
 }
 
-static bool p_mutka_server_read_host_keys
+static bool p_mutka_server_read_host_signature
 (
     struct mutka_server* server,
-    const char* publkey_path,
-    const char* privkey_path
+    const char* host_signature_path
 ){
     bool result = false;
 
-    if(!mutka_file_exists(publkey_path)) {
-        goto out;
-    }
-    if(!mutka_file_exists(privkey_path)) {
+    if(!mutka_file_exists(host_signature_path)) {
         goto out;
     }
 
-    const size_t publkey_expected_header_len = strlen(HOST_ED25519_PUBLKEY_HEADER_TAG);
-    const size_t privkey_expected_header_len = strlen(HOST_ED25519_PRIVKEY_HEADER_TAG);
-
-    if(mutka_file_size(publkey_path) 
-            != (ssize_t)(publkey_expected_header_len + ED25519_KEYLEN)) {
+    if(mutka_file_size(host_signature_path) !=
+              sizeof(server->host_mldsa87_publkey.bytes) +
+              sizeof(server->host_signature.bytes)) {
         goto out;
-    }
-
-    if(mutka_file_size(privkey_path) 
-            != (ssize_t)(privkey_expected_header_len + ED25519_KEYLEN)) {
-        goto out;
-    }
-
-    char* publkey_file = NULL;
-    size_t publkey_file_size = 0;
-
-    char* privkey_file = NULL;
-    size_t privkey_file_size = 0;
-    
-    if(!mutka_map_file(publkey_path, PROT_READ, &publkey_file, &publkey_file_size)) {
-        goto out;
-    }
- 
-    if(!mutka_map_file(privkey_path, PROT_READ, &privkey_file, &privkey_file_size)) {
-        goto unmap_and_out;
     }
     
-    if(!p_mutka_server_validate_keyfile(publkey_file, 
-                HOST_ED25519_PUBLKEY_HEADER_TAG, publkey_expected_header_len)) {
-        mutka_set_errmsg("Host ed25519 PUBLIC key file header doesnt match expected value.");
-        goto unmap_and_out;
-    }
+    // The signature file contains the public key too.
 
-    if(!p_mutka_server_validate_keyfile(privkey_file, 
-                HOST_ED25519_PRIVKEY_HEADER_TAG, privkey_expected_header_len)) {
-        mutka_set_errmsg("Host ed25519 PRIVATE key file header doesnt match expected value.");
-        goto unmap_and_out;
-    }
+    char* sigfile_data = NULL;
+    size_t sigfile_size = 0;
 
 
 
-    const size_t publkey_len = publkey_file_size - publkey_expected_header_len;
-    const size_t privkey_len = privkey_file_size - privkey_expected_header_len;
 
-    if(publkey_len != sizeof(server->host_ed25519_publkey.bytes)) {
-        mutka_set_errmsg("Could not read correct amount of bytes for host ed25519 public key.");
-        goto unmap_and_out;
-    }
 
-    if(privkey_len != sizeof(server->host_ed25519_privkey.bytes)) {
-        mutka_set_errmsg("Could not read correct amount of bytes for host ed25519 private key.");
-        goto unmap_and_out;
-    }
-
-    memmove(server->host_ed25519_publkey.bytes,
-            publkey_file + publkey_expected_header_len,
-            publkey_len);
-
-    memmove(server->host_ed25519_privkey.bytes,
-            privkey_file + privkey_expected_header_len,
-            privkey_len);
-
-    printf("\033[32m(Existing host ed25519 keys seem to be valid)\033[0m\n");
-
-    result = true;
 
 unmap_and_out:
 
-    if(publkey_file) {
-        munmap(publkey_file, publkey_file_size);
-    }
-
-    if(privkey_file) {
-        munmap(privkey_file, privkey_file_size);
-    }
+    munmap(sigfile, sigfile_size);
 
 out:
     return result;
@@ -224,8 +94,7 @@ out:
 struct mutka_server* mutka_create_server
 (
     struct mutka_server_cfg config,
-    const char* publkey_path,
-    const char* privkey_path
+    const char* host_signature_path
 ){ 
 
     if((config.flags & MUTKA_SERVER_ENABLE_CAPTCHA)) {
@@ -237,9 +106,23 @@ struct mutka_server* mutka_create_server
 
     struct mutka_server* server = malloc(sizeof *server);
 
-    MUTKA_CLEAR_KEY(server->host_ed25519_publkey);
-    MUTKA_CLEAR_KEY(server->host_ed25519_privkey);
+    memset(server->host_mldsa87_publkey.bytes, 0, sizeof(server->host_mldsa87_publkey.bytes));
+    memset(server->host_signature.bytes, 0, sizeof(server->host_signature.bytes));
+    
 
+    if(!p_mutka_server_read_host_signature(server, host_signature_path)) {
+        // Host signature doesnt exist or it was not valid.
+        // Ask to generate new one.
+
+        if(!config.accept_host_signaturegen_callback()) {
+            mutka_set_errmsg("Host signature generation was cancelled.");
+            free(server);
+            server = NULL;
+            goto out;
+        }
+    }
+
+    /*
     if(!p_mutka_server_read_host_keys(server, publkey_path, privkey_path)) {
        
         if(!config.accept_host_keygen_callback()) {
@@ -258,6 +141,7 @@ struct mutka_server* mutka_create_server
             goto out;
         }
     }
+    */
 
     server->config = config;
     server->socket_fd = -1;
@@ -431,15 +315,18 @@ static void mutka_server_handle_client_connect(struct mutka_server* server, stru
     server->config.client_connected_callback(server, new_client_ptr);
 
 
+    printf("%s: TODO: SEND HOST SIGNATURE and MLDSA87 PUBLIC KEY TO CLIENT\n", __func__);
+
+    /*
     // Send host public key for client.
     mutka_rpacket_prep(&server->out_raw_packet, MPACKET_HOST_PUBLIC_KEY);
     mutka_rpacket_add_ent(&server->out_raw_packet, 
             "host_public_key",
-            server->host_ed25519_publkey.bytes,
+            server->host_mldsa87_publkey.bytes,
             sizeof(server->host_ed25519_publkey.bytes),
             RPACKET_ENCODE);
-
     mutka_dump_key(&server->host_ed25519_publkey, "host public key");
+    i*/
 
     mutka_send_clear_rpacket(client->socket_fd, &server->out_raw_packet);
 }
@@ -582,6 +469,7 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
                     return;
                 }
 
+                /*
                 if(!mutka_openssl_ED25519_sign(&signature,
                             &server->host_ed25519_privkey,
                             (char*)client_nonce,
@@ -589,6 +477,7 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
                     mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed create signature.", __func__);
                     return;
                 }
+                */
 
                 mutka_dump_sig(&signature, "signature");
 

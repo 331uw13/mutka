@@ -47,20 +47,29 @@ struct mutka_client_cfg {
     char  trusted_privkey [ED25519_KEYLEN]; // From mutka_decrypt_trusted_privkey()
     char  trusted_publkey [ED25519_KEYLEN]; // From mutka_read_trusted_publkey()
 
-
-    // When client connects to server for the first time
-    // or doesnt have the server host ed25519 public key in trusted_hosts file.
-    // This callback can return 'true' if it allows it to be added, 
-    // If 'false' is returned MUTKA_CLFLG_SHOULD_DISCONNECT is set.
+    // Called when client connects to server for the first time
+    // or doesnt have the received server signature in "trusted_hosts" file.
+    // 
+    // This callback can return 'true' if signature is allowed to be added.
+    // If 'false' is returned, MUTKA_CLFLG_SHOULD_DISCONNECT is set.
     bool(*accept_new_trusted_host_callback)
-        (struct mutka_client*, struct mutka_str* /*recv host public key*/);
+        (struct mutka_client*, struct mutka_str* /*recv host signature*/);
 
-    // If client receives a different host ed25519 public key than it has saved in trusted_hosts file.
-    // A clear warning must be made and ask if allow to overwrite the existing key.
-    // This callback can return 'true' to accept the key to be overwritten (may be risky!)
+
+    // If client receives a different host signature than it has saved in "trusted_hosts" file. 
+    // A clear warning must be made and ask if allow to overwrite the existing signature.
+    //
+    // This callback can return 'true' to accept the signature to be overwritten(MAY BE RISKY!)
     // and if 'false' is returned (no overwrite allowed), then MUTKA_CLFLG_SHOULD_DISCONNECT is set.
-    bool(*accept_host_public_key_change_callback)
-        (struct mutka_client*, struct mutka_str* /*recv host public key*/);
+    //
+    // IMPORTANT NOTE:
+    //   It should be obvious to the user that overwriting the host signature
+    //   without consideration is very risky.
+    //   Because if the signature ever changes it means someone might be tampering with 
+    //   the server's files or trying to execute a MITM attack.
+    //   Thus overwriting the signature before contacting the server admin is risky move.
+    bool(*accept_host_signature_change_callback)
+        (struct mutka_client*, struct mutka_str* /*recv host signature*/);
 
     int flags;
 };

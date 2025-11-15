@@ -17,86 +17,6 @@ void mutka_error(char* buffer, size_t size) {
 
 
 
-
-int main(int argc, char** argv) {
-
-    mutka_set_errmsg_callback(mutka_error);
-
-
-    key_mlkem1024_priv_t ALICE_private_key;
-    key_mlkem1024_publ_t ALICE_public_key;
-
-    key_mlkem1024_priv_t BOB_private_key;
-    key_mlkem1024_publ_t BOB_public_key;
-
-
-
-    if(!mutka_openssl_MLKEM1024_keypair(&ALICE_private_key, &ALICE_public_key)) {
-        printf("Failed to generate keys.\n");
-        return 1;
-    }
-
-    if(!mutka_openssl_MLKEM1024_keypair(&BOB_private_key, &BOB_public_key)) {
-        printf("Failed to generate keys.\n");
-        return 1;
-    }
-
-
-    uint8_t wrappedkey[1024*2] = { 0 };
-    size_t wrappedkey_len = 0;
-    key128bit_t shared_secret;
-   
-    // Encapsulate with peer's public key.
-    if(!mutka_openssl_encaps(
-                wrappedkey, sizeof(wrappedkey), &wrappedkey_len,
-                &shared_secret,
-                &BOB_public_key)) {
-        printf("Failed to encapsulate.\n");
-        return 1;
-    }
-
-
-    //printf("\n");
-    //mutka_dump_bytes((char*)wrappedkey, wrappedkey_len, "wrappedkey");
-    //printf("\n");
-    mutka_dump_bytes((char*)shared_secret.bytes, sizeof(shared_secret.bytes), "shared_secret");
-
-
-    printf("––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––\n\n");
-
-
-    uint8_t unwrappedkey[32] = { 0 };
-    size_t unwrappedkey_len = 0;
-
-    // Decapsulate with self private key.
-    if(!mutka_openssl_decaps(
-                unwrappedkey, sizeof(unwrappedkey), &unwrappedkey_len,
-                wrappedkey, wrappedkey_len,
-                &BOB_private_key)) {
-        printf("Failed to decapsulate.\n");
-        return 1;
-    }
-
-    mutka_dump_bytes((char*)unwrappedkey, unwrappedkey_len, "unwrappedkey");
-
-
-
-
-    return 0;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
 // Mutex is used for reading input because the main thread requires input as well.
 // Otherwise both will get the same input...
 static pthread_mutex_t stdin_read_mutex;
@@ -149,7 +69,10 @@ bool accept_host_public_key_change(struct mutka_client* client, struct mutka_str
 }
 
 
-int main_2(int argc, char** argv) {
+int main(int argc, char** argv) {
+    
+    printf("sizeof(struct mutka_client) = %li\n", sizeof(struct mutka_client));
+    
     if(argc < 2) {
         fprintf(stderr, "No nickname. Usage: %s <nickname>\n", argv[0]);
         return 1;

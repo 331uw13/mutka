@@ -67,6 +67,8 @@ static bool mutka_openssl_keypair_ctx
         goto out;
     }
 
+    printf("%s: publ = %li, priv = %li\n", caller_func, public_keylen, private_keylen);
+
     if(private_keylen != privkey_expected_len) {
         mutka_set_errmsg("%s (called from: %s): Unexpected private key length.",
                 __func__, caller_func);
@@ -131,7 +133,12 @@ bool mutka_openssl_MLKEM1024_keypair(key_mlkem1024_priv_t* privkey_out, key_mlke
             publkey_out->bytes, sizeof(publkey_out->bytes));
 }
 
-
+bool mutka_openssl_MLDSA87_keypair(key_mldsa87_priv_t* privkey_out, key_mldsa87_publ_t* publkey_out) {
+    EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new_from_name(NULL, "ML-DSA-87", NULL);
+    return mutka_openssl_keypair_ctx(ctx, __func__,
+            privkey_out->bytes, sizeof(privkey_out->bytes),
+            publkey_out->bytes, sizeof(publkey_out->bytes));   
+}
 
 bool mutka_openssl_scrypt(
     struct mutka_str* derived_key,
@@ -665,6 +672,7 @@ out:
 
 
 
+
 bool mutka_openssl_ED25519_sign
 (
     signature_t* signature,
@@ -743,7 +751,7 @@ bool mutka_openssl_ED25519_verify
         goto out;
     }
 
-    result = (EVP_DigestVerify(ctx, 
+    result = (EVP_DigestVerify(ctx,
                 signature->bytes,
                 sizeof(signature->bytes),
                 (const uint8_t*)data, data_size) == 1);
@@ -759,4 +767,177 @@ out:
     return result;
 }
 
+
+bool mutka_openssl_MLDSA87_sign
+(
+    const char* context_str,
+    signature_mldsa87_t* signature,
+    key_mldsa87_publ_t* verifykey_out,
+    char* data,
+    size_t data_size
+){
+    bool result = false;
+    EVP_PKEY* pkey = NULL;
+    EVP_PKEY_CTX* ctx = NULL;
+    EVP_SIGNATURE* sig_alg = NULL;
+
+    const char* method = "ML-DSA-87";
+
+
+    EVP_PKEY_CTX* pkey_ctx = EVP_PKEY_CTX_new_from_name(NULL, "ML-DSA-87", NULL);
+
+    if(EVP_PKEY_keygen_init(pkey_ctx) <= 0) {
+        openssl_error();
+        goto out;
+    }
+
+    if(EVP_PKEY_keygen(pkey_ctx, &pkey) <= 0) {
+        openssl_error();
+        goto out;
+    }
+
+    if(!pkey) {
+        openssl_error();
+        goto out;
+    }
+
+    ctx = EVP_PKEY_CTX_new_from_pkey(NULL, pkey, NULL);
+    if(!ctx) {
+        openssl_error();
+        goto out;
+    }
+
+    sig_alg = EVP_SIGNATURE_fetch(NULL, method, NULL);
+    if(!sig_alg) {
+        openssl_error();
+        goto out;
+    }
+
+    const size_t context_strlen = strlen(context_str);
+    const OSSL_PARAM params[] = {
+        OSSL_PARAM_octet_string("context-string", (uint8_t*)context_str, context_strlen),
+        OSSL_PARAM_END
+    };
+
+
+    size_t signature_len = 0;
+   
+    if(EVP_PKEY_sign_message_init(ctx, sig_alg, params) <= 0) {
+        openssl_error();
+        goto out;
+    }
+
+    if(EVP_PKEY_sign(ctx, NULL, &signature_len, (const uint8_t*)data, data_size) <= 0) {
+        openssl_error();
+        goto out;
+    }
+
+    if(signature_len != sizeof(signature->bytes)) {
+        mutka_set_errmsg("%s: Unexpected signature length.", __func__);
+        goto out;
+    }
+
+    if(EVP_PKEY_sign(ctx, signature->bytes, &signature_len, (const uint8_t*)data, data_size) <= 0) {
+        openssl_error();
+        goto out;
+    }
+
+    size_t public_keylen = 0;
+
+    // Get public key length.
+    if(EVP_PKEY_get_raw_public_key(pkey, NULL, &public_keylen) <= 0) {
+        openssl_error();
+        goto out;
+    }
+
+    if(public_keylen != sizeof(verifykey_out->bytes)) {
+        mutka_set_errmsg("%s: Unexpected public key length.", __func__);
+        goto out;
+    }
+
+    // Save public key for verifier.
+    if(EVP_PKEY_get_raw_public_key(pkey, verifykey_out->bytes, &public_keylen) <= 0) {
+        openssl_error();
+        goto out;
+    }
+
+    result = true;
+out:
+    if(sig_alg) {
+        EVP_SIGNATURE_free(sig_alg);
+    }
+    if(pkey) {
+        EVP_PKEY_free(pkey);
+    }
+    if(ctx) {
+        EVP_PKEY_CTX_free(ctx);
+    }
+    if(pkey_ctx) {
+        EVP_PKEY_CTX_free(pkey_ctx);
+    }
+    
+    return result;
+}
+
+
+bool mutka_openssl_MLDSA87_verify
+(
+    const char* context_str,
+    signature_mldsa87_t* signature,
+    key_mldsa87_publ_t* verifykey,
+    char* data,
+    size_t data_size
+){
+    bool result = false;
+    EVP_PKEY* pkey = NULL;
+    EVP_PKEY_CTX* ctx = NULL;
+    EVP_SIGNATURE* sig_alg = NULL;
+
+    const char* method = "ML-DSA-87";
+
+    pkey = EVP_PKEY_new_raw_public_key_ex(NULL, method, NULL, verifykey->bytes, sizeof(verifykey->bytes));
+    if(!pkey) {
+        openssl_error();
+        goto out;
+    }
+
+    ctx = EVP_PKEY_CTX_new_from_pkey(NULL, pkey, NULL);
+    if(!ctx) {
+        openssl_error();
+        goto out;
+    }
+
+    sig_alg = EVP_SIGNATURE_fetch(NULL, method, NULL);
+    if(!sig_alg) {
+        openssl_error();
+        goto out;
+    }
+
+    const size_t context_strlen = strlen(context_str);
+    const OSSL_PARAM params[] = {
+        OSSL_PARAM_octet_string("context-string", (uint8_t*)context_str, context_strlen),
+        OSSL_PARAM_END
+    };
+
+
+    if(EVP_PKEY_verify_message_init(ctx, sig_alg, params) <= 0) {
+        openssl_error();
+        goto out;
+    }
+
+    result = (EVP_PKEY_verify(ctx, signature->bytes, sizeof(signature->bytes), (const uint8_t*)data, data_size) == 1);
+
+out:
+    if(sig_alg) {
+        EVP_SIGNATURE_free(sig_alg);
+    }
+    if(pkey) {
+        EVP_PKEY_free(pkey);
+    }
+    if(ctx) {
+        EVP_PKEY_CTX_free(ctx);
+    }
+    
+    return result;
+}
 

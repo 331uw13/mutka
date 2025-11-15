@@ -47,7 +47,19 @@ enum mutka_packet_ids : int {
     // This packet will be sent.
     // TODO: MPACKET_RESEND,
 
-    MPACKET_HOST_PUBLIC_KEY,
+
+    // When the client connects to server
+    // the server will send its longterm ML-DSA-87 signature
+    // and the public key which was used to generate the signature.
+    //
+    // If the client has the host signature saved on disk 
+    // it will try and match it to existing one, 
+    // but if it doesnt match a serious warning should be shown
+    // (see "client.h" 'accept_host_public_key_change_callback()').
+    //
+    // If the host signature doesnt exist on client's "trusted_hosts" file
+    // 'accept_new_trusted_host_callback()' is called.
+    MPACKET_HOST_SIGNATURE_KEY,
 
     // Client and server will exchange metadata keys
     // for encrypting and decrypting packet metadata.
@@ -55,17 +67,9 @@ enum mutka_packet_ids : int {
     // but it does add layer of privacy.
     //
     // The handshake can be initiated by the client
-    // by sending this packet id with randomly generated "client_nonce"
-    // The server will generate a signature which the client
+    // by sending this packet id with randomly generated "client_nonce".
+    // The server will generate a ML-DSA-87 signature which the client
     // will try to verify with same "client_nonce" parameter as it sent.
-    // That will reduce the risk of MITM attacks, because if the attacker
-    // tries to generate its own keys and signature, the client will not be able to
-    // verify the signature. Clients will have server's ed25519 public key stored on disk.
-    // Also clients receive a warning 
-    // if the server's ed25519 public key ever changes.
-    // 
-    // NOTE: First contact MITM attacks cannot to be detected this way
-    //       but it will provide protection for future. 
     MPACKET_EXCHANGE_METADATA_KEYS,
 
     // Client must respond to metadata key exchange
@@ -79,9 +83,6 @@ enum mutka_packet_ids : int {
     // If the answer is correct and server doesnt have password enabled
     // the client is verified after good response.
     MPACKET_CAPTCHA,
-
-
-    //MPACKET_GET_CLIENTS_X25519_PUBLKEYS,
 
 
 
