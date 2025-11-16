@@ -32,8 +32,8 @@ void packet_received(struct mutka_server* server, struct mutka_client* client) {
 
 }
 
-bool accept_host_signaturegen() {
-    printf("\033[33mGenerate new server signature? (yes/no): \033[0m");
+bool accept_new_hostkeys() {
+    printf("\033[33mGenerate new server keys? (yes/no): \033[0m");
     fflush(stdout);
 
     char input[6] = { 0 };
@@ -50,7 +50,7 @@ int main() {
         .max_clients = 8,
         .flags = (MUTKA_SERVER_REUSEADDR | MUTKA_SERVER_ENABLE_CAPTCHA),
 
-        .accept_host_signaturegen_callback  = accept_host_signaturegen,
+        .accept_new_hostkeys_callback   = accept_new_hostkeys,
         .client_connected_callback      = client_connected,
         .client_disconnected_callback   = client_disconnected,
         .packet_received_callback       = packet_received
@@ -63,7 +63,7 @@ int main() {
 
 
     // host's ED25519 are generated if they dont exist.
-    struct mutka_server* server = mutka_create_server(config, "./host_signature");
+    struct mutka_server* server = mutka_create_server(config, "./host_keys");
 
     if(!server) {
         return 1;

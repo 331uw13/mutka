@@ -47,7 +47,7 @@ void mutka_dump_sig(signature_t* sig, const char* label); //
 bool mutka_openssl_X25519_keypair(key128bit_t* privkey_out, key128bit_t* publkey_out);
 bool mutka_openssl_ED25519_keypair(key128bit_t* privkey_out, key128bit_t* publkey_out);
 bool mutka_openssl_MLKEM1024_keypair(key_mlkem1024_priv_t* privkey_out, key_mlkem1024_publ_t* publkey_out);
-//bool mutka_openssl_MLDSA87_keypair(key_mldsa87_priv_t* privkey_out, key_mldsa87_publ_t* publkey_out);
+bool mutka_openssl_MLDSA87_keypair(key_mldsa87_priv_t* privkey_out, key_mldsa87_publ_t* publkey_out);
 
 
 bool mutka_openssl_scrypt
@@ -148,14 +148,11 @@ bool mutka_openssl_ED25519_verify
 );
 
 
-// Can be passed to mutka_openssl_MLDSA87_sign() as 'data'
-#define MLDSA87_SIGN_GENERATED_PUBLKEY NULL
-
 bool mutka_openssl_MLDSA87_sign
 (
     const char* context_str,
     signature_mldsa87_t* signature,
-    key_mldsa87_publ_t* verifykey_out,
+    key_mldsa87_priv_t* self_privkey,
     char* data,
     size_t data_size
 );
@@ -164,10 +161,9 @@ bool mutka_openssl_MLDSA87_verify
 (
     const char* context_str,
     signature_mldsa87_t* signature,
-    key_mldsa87_publ_t* verifykey,
+    key_mldsa87_publ_t*  peer_publkey,
     char* data,
     size_t data_size
 );
-
 
 #endif

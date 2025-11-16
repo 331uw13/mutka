@@ -16,8 +16,7 @@
 #define MUTKA_CAPTCHA_MAX 6
 
 // Mutka client config flags (for: mutka_client_cfg)
-#define MUTKA_CCFG_HAS_TRUSTED_PUBLKEY (1 << 0)
-#define MUTKA_CCFG_HAS_TRUSTED_PRIVKEY (1 << 1)
+#define MUTKA_CCFLG_HAS_PUBLIC_IDENTITY (1 << 0)
 
 
 // Mutka client flags (for: struct mutka_client)
@@ -39,13 +38,13 @@ struct mutka_client_cfg {
                                          // If 'use_default_cfgdir' is set to 'true'
     
     // Config paths are set by mutka_validate_client_cfg()
-    char  trusted_peers_dir    [MUTKA_PATH_MAX];
-    char  trusted_privkey_path [MUTKA_PATH_MAX];
-    char  trusted_publkey_path [MUTKA_PATH_MAX];
-    char  trusted_hosts_path   [MUTKA_PATH_MAX];
-
-    char  trusted_privkey [ED25519_KEYLEN]; // From mutka_decrypt_trusted_privkey()
-    char  trusted_publkey [ED25519_KEYLEN]; // From mutka_read_trusted_publkey()
+    char  trusted_peers_dir        [MUTKA_PATH_MAX];
+    char  trusted_hosts_path       [MUTKA_PATH_MAX];
+    char  private_identity_path    [MUTKA_PATH_MAX];
+    char  public_identity_path     [MUTKA_PATH_MAX];
+    
+    key_mldsa87_priv_t    identity_privkey;
+    key_mldsa87_publ_t    identity_publkey;
 
     // Called when client connects to server for the first time
     // or doesnt have the received server signature in "trusted_hosts" file.
@@ -87,20 +86,6 @@ struct mutka_client {
     struct mutka_cipher_keys mtdata_keys;
 
 
-    // At client side these are its own local key pair.
-    // And if at server side these are the client's serverside key pair
-    //key128bit_t          metadata_publkey;
-    //key128bit_t          metadata_privkey;
-
-    // At client side this is serverside metadata public key.
-    // And if at server side this is client's metadata public key.
-    //key128bit_t          peer_metadata_publkey;
-
-    // Shared key derived from peer public key and self private key
-    // and passed through HKDF.
-    //key128bit_t          metadata_shared_key;
-
-
     int flags;
 
 
@@ -115,9 +100,6 @@ struct mutka_client {
 
     uint8_t   client_nonce[16];
 
-    key128bit_t              trusted_privkey;
-    key128bit_t              trusted_publkey;
-    key128bit_t              host_public_key;
     struct mutka_raw_packet  out_raw_packet;
     struct mutka_packet      inpacket; // Last received parsed packet.
     
@@ -136,24 +118,25 @@ struct mutka_client {
 
 
 bool mutka_validate_client_cfg(struct mutka_client_cfg* config, char* nickname);
-bool mutka_cfg_trustedkeys_exists(struct mutka_client_cfg* config);
+bool mutka_client_identity_exists(struct mutka_client_cfg* config);
 
-// Passphase is required for encrypting the trusted private key file.
-bool mutka_cfg_generate_trustedkeys
+bool mutka_new_client_identity
 (
     struct mutka_client_cfg* config,
     char* privkey_passphase, size_t passphase_len
 );
 
-bool mutka_decrypt_trusted_privkey
+bool mutka_decrypt_client_identity
 (
     struct mutka_client_cfg* config,
     char* passphase, size_t passphase_len
 );
 
+bool mutka_read_public_identity(struct mutka_client_cfg* config);
+
 
 // Trusted public key is not encrypted.
-bool mutka_read_trusted_publkey(struct mutka_client_cfg* config);
+//bool mutka_read_trusted_publkey(struct mutka_client_cfg* config);
 
 struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, char* port);
 

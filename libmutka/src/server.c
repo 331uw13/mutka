@@ -45,37 +45,33 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
 
 
 
-static bool p_mutka_server_generate_host_signature
+static bool p_mutka_server_generate_hostkeys
 (
     struct mutka_server* server,
-    const char* host_signature_path
+    const char* hostkeys_path
 ){
-
-    if(mutka_file_exists(host_signature_path)) {
-        remove(host_signature_path);
+    if(mutka_file_exists(hostkeys_path)) {
+        remove(hostkeys_path);
     }
 
-    if(!mutka_openssl_MLDSA87_sign(MUTKA_VERSION_STR"(HOST_SIGNATURE)",
-                &server->host_signature,
-                &server->host_mldsa87_publkey,
-                MLDSA87_SIGN_GENERATED_PUBLKEY, 0)) {
+    if(!mutka_openssl_MLDSA87_keypair(&server->host_mldsa87_privkey, &server->host_mldsa87_publkey)) {
         return false;
     }
 
 
     uint8_t hostfile_data
-        [ sizeof(server->host_signature.bytes) +
+        [ sizeof(server->host_mldsa87_privkey.bytes) +
           sizeof(server->host_mldsa87_publkey.bytes)] = { 0 };
 
     memmove(hostfile_data,
-            server->host_signature.bytes, 
-            sizeof(server->host_signature.bytes));
+            server->host_mldsa87_privkey.bytes, 
+            sizeof(server->host_mldsa87_privkey.bytes));
 
-    memmove(hostfile_data + sizeof(server->host_signature.bytes),
-            server->host_mldsa87_publkey.bytes, 
+    memmove(hostfile_data + sizeof(server->host_mldsa87_privkey.bytes),
+            server->host_mldsa87_publkey.bytes,
             sizeof(server->host_mldsa87_publkey.bytes));
 
-    int fd = creat(host_signature_path, S_IRUSR);
+    int fd = creat(hostkeys_path, S_IRUSR);
     if(fd < 0) {
         mutka_set_errmsg("%s: %s", __func__, strerror(errno));
         return false;
@@ -91,42 +87,43 @@ static bool p_mutka_server_generate_host_signature
     return true;
 }
 
-static bool p_mutka_server_read_host_signature
+static bool p_mutka_server_read_hostkeys
 (
     struct mutka_server* server,
-    const char* host_signature_path
+    const char* hostkeys_path
 ){
     bool result = false;
 
-    if(!mutka_file_exists(host_signature_path)) {
+    if(!mutka_file_exists(hostkeys_path)) {
         goto out;
     }
 
-    if(mutka_file_size(host_signature_path) !=
+    if(mutka_file_size(hostkeys_path) !=
               sizeof(server->host_mldsa87_publkey.bytes) +
-              sizeof(server->host_signature.bytes)) {
+              sizeof(server->host_mldsa87_privkey.bytes)) {
         goto out;
     }
     
     char* hostfile_data = NULL;
     size_t hostfile_size = 0;
 
-    if(!mutka_map_file(host_signature_path, PROT_READ, &hostfile_data, &hostfile_size)) {
+    if(!mutka_map_file(hostkeys_path, PROT_READ, &hostfile_data, &hostfile_size)) {
         goto out;
     }
 
     size_t offset = 0;
 
-    memmove(server->host_signature.bytes, 
-            hostfile_data,
-            sizeof(server->host_signature.bytes));
-    offset += sizeof(server->host_signature.bytes);
+    // Read private key.
+    memmove(server->host_mldsa87_privkey.bytes, 
+            hostfile_data + offset,
+            sizeof(server->host_mldsa87_privkey.bytes));
 
+    offset += sizeof(server->host_mldsa87_privkey.bytes);
 
+    // Read public key.
     memmove(server->host_mldsa87_publkey.bytes, 
             hostfile_data + offset,
             sizeof(server->host_mldsa87_publkey.bytes));
-    //offset += sizeof(server->host_mldsa87_publkey.bytes);
 
 
     result = true;
@@ -140,7 +137,7 @@ out:
 struct mutka_server* mutka_create_server
 (
     struct mutka_server_cfg config,
-    const char* host_signature_path
+    const char* hostkeys_path
 ){ 
 
     if((config.flags & MUTKA_SERVER_ENABLE_CAPTCHA)) {
@@ -152,23 +149,23 @@ struct mutka_server* mutka_create_server
 
     struct mutka_server* server = malloc(sizeof *server);
 
+    memset(server->host_mldsa87_privkey.bytes, 0, sizeof(server->host_mldsa87_privkey.bytes));
     memset(server->host_mldsa87_publkey.bytes, 0, sizeof(server->host_mldsa87_publkey.bytes));
-    memset(server->host_signature.bytes, 0, sizeof(server->host_signature.bytes));
     
 
-    if(!p_mutka_server_read_host_signature(server, host_signature_path)) {
+    if(!p_mutka_server_read_hostkeys(server, hostkeys_path)) {
         // Host signature doesnt exist or it was not valid.
         // Ask to generate new one.
 
-        if(!config.accept_host_signaturegen_callback()) {
-            mutka_set_errmsg("Host signature generation was cancelled.");
+        if(!config.accept_new_hostkeys_callback()) {
+            mutka_set_errmsg("Host key generation was cancelled.");
             free(server);
             server = NULL;
             goto out;
         }
 
-        if(!p_mutka_server_generate_host_signature(server, host_signature_path)) {
-            mutka_set_errmsg("Failed to generate host signature.");
+        if(!p_mutka_server_generate_hostkeys(server, hostkeys_path)) {
+            mutka_set_errmsg("Failed to generate host keys");
             free(server);
             server = NULL;
             goto out;
@@ -354,11 +351,6 @@ static void p_mutka_server_handle_client_connect(struct mutka_server* server, st
     mutka_rpacket_prep(&server->out_raw_packet, MPACKET_HOST_SIGNATURE);
     
     mutka_rpacket_add_ent(&server->out_raw_packet,
-            "host_signature",
-            server->host_signature.bytes, sizeof(server->host_signature.bytes),
-            RPACKET_ENCODE);
-
-    mutka_rpacket_add_ent(&server->out_raw_packet,
             "host_publkey",
             server->host_mldsa87_publkey.bytes, sizeof(server->host_mldsa87_publkey.bytes),
             RPACKET_ENCODE);
@@ -470,30 +462,6 @@ static void p_mutka_server_send_client_cipher_publkeys
     // The client's keys are already generated from 
     // mutka_server_handle_packet() 'MPACKET_EXCHANGE_METADATA_KEYS'
 
-
-    uint8_t publkey_combined_hash[SHA512_DIGEST_LENGTH * 2] = { 0};
-
-    SHA512(client->mtdata_keys.x25519_publkey.bytes,
-            sizeof(client->mtdata_keys.x25519_publkey.bytes),
-            publkey_combined_hash);
-
-    SHA512(mlkem_wrappedkey,
-            mlkem_wrappedkey_len,
-            publkey_combined_hash + SHA512_DIGEST_LENGTH);
-
-
-    key_mldsa87_publ_t verifykey;
-    signature_mldsa87_t signature;
-
-    if(!mutka_openssl_MLDSA87_sign(MUTKA_VERSION_STR"(METADATAKEYS_FROM_SERVER)",
-                &signature,
-                &verifykey,
-                (char*)publkey_combined_hash,
-                sizeof(publkey_combined_hash))) {
-        mutka_set_errmsg("%s: Failed to create signature.", __func__);
-        return;
-    }
-
     mutka_rpacket_prep(&server->out_raw_packet, MPACKET_EXCHANGE_METADATA_KEYS);
     mutka_rpacket_add_ent(&server->out_raw_packet,
             "x25519_public",
@@ -505,18 +473,6 @@ static void p_mutka_server_send_client_cipher_publkeys
             "mlkem_wrapped",
             mlkem_wrappedkey,
             mlkem_wrappedkey_len,
-            RPACKET_ENCODE);
-
-    mutka_rpacket_add_ent(&server->out_raw_packet,
-            "verify_with",
-            verifykey.bytes,
-            sizeof(verifykey.bytes),
-            RPACKET_ENCODE);
-
-    mutka_rpacket_add_ent(&server->out_raw_packet,
-            "signature",
-            signature.bytes,
-            sizeof(signature.bytes),
             RPACKET_ENCODE);
 
     mutka_rpacket_add_ent(&server->out_raw_packet,
@@ -556,9 +512,13 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
             }
             return;
         */
+    
+        case MPACKET_METADATA_KEY_EXHCANGE_COMPLETE:
+            printf("\033[32mMetadata key exchange with %i is complete.\033[0m\n", client->uid);
+            break;
 
         case MPACKET_EXCHANGE_METADATA_KEYS:
-            if(server->inpacket.num_elements != 4) {
+            if(server->inpacket.num_elements != 2) {
                 return;
             }
             {
@@ -569,14 +529,9 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
 
                 struct mutka_packet_elem* peer_x25519_elem = &server->inpacket.elements[0];
                 struct mutka_packet_elem* peer_mlkem_elem  = &server->inpacket.elements[1];
-                struct mutka_packet_elem* verifykey_elem  = &server->inpacket.elements[2];
-                struct mutka_packet_elem* signature_elem  = &server->inpacket.elements[3];
 
                 key128bit_t           peer_x25519_publkey;
                 key_mlkem1024_publ_t  peer_mlkem_publkey;
-
-                key_mldsa87_publ_t    verifykey;
-                signature_mldsa87_t   signature;
 
                 if(!mutka_decode(peer_x25519_publkey.bytes, sizeof(peer_x25519_publkey.bytes),
                             peer_x25519_elem->data.bytes,
@@ -591,44 +546,6 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
                     mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to decode peer ML-KEM-1024 public key.");
                     return;
                 }
-
-                if(!mutka_decode(verifykey.bytes, sizeof(verifykey.bytes),
-                            verifykey_elem->data.bytes,
-                            verifykey_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to decode signature public key.");
-                    return;
-                }
-
-                if(!mutka_decode(signature.bytes, sizeof(signature.bytes),
-                            signature_elem->data.bytes,
-                            signature_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to decode signature.");
-                    return;
-                }
-
-                // Get public keys combined hash to verify signature.
-                uint8_t publkey_combined_hash[SHA512_DIGEST_LENGTH * 2] = { 0 };
-
-                SHA512(peer_x25519_publkey.bytes, 
-                        sizeof(peer_x25519_publkey.bytes),
-                        publkey_combined_hash);
-                
-                SHA512(peer_mlkem_publkey.bytes, 
-                        sizeof(peer_mlkem_publkey.bytes),
-                        publkey_combined_hash + SHA512_DIGEST_LENGTH);
-   
-
-                if(!mutka_openssl_MLDSA87_verify(MUTKA_VERSION_STR"(METADATAKEYS_FROM_CLIENT)",
-                            &signature,
-                            &verifykey,
-                            (char*)publkey_combined_hash,
-                            sizeof(publkey_combined_hash))) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Could not verify client's public cipher keys.");
-                    return;
-                }
-
-                printf("\033[32mVerified client(%i) public cipher keys\033[0m\n", client->uid);
-
 
                 uint8_t hkdf_salt_x25519[HKDF_SALT_LEN] = { 0 };
                 RAND_bytes(hkdf_salt_x25519, sizeof(hkdf_salt_x25519));

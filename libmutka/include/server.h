@@ -20,7 +20,7 @@ struct mutka_server_cfg {
     uint32_t max_clients;
     int      flags;
 
-    bool(*accept_host_signaturegen_callback)();
+    bool(*accept_new_hostkeys_callback)();
     void(*client_connected_callback)(struct mutka_server*, struct mutka_client*);
     void(*client_disconnected_callback)(struct mutka_server*, struct mutka_client*);
     void(*packet_received_callback)(struct mutka_server*, struct mutka_client*);
@@ -35,8 +35,8 @@ struct mutka_server {
     struct sockaddr_in      socket_addr;
     int                     socket_fd;
 
+    key_mldsa87_priv_t      host_mldsa87_privkey;
     key_mldsa87_publ_t      host_mldsa87_publkey;
-    signature_mldsa87_t     host_signature;
 
     struct mutka_client*    clients;
     uint32_t                num_clients;
@@ -49,7 +49,7 @@ struct mutka_server {
 struct mutka_server* mutka_create_server
 (
     struct mutka_server_cfg config,
-    const char* host_signature_path
+    const char* hostkeys_path
 );
 
 void mutka_close_server(struct mutka_server* server);

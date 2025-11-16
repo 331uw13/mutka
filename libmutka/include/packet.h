@@ -73,8 +73,9 @@ enum mutka_packet_ids : int {
     MPACKET_EXCHANGE_METADATA_KEYS,
 
     // Client must respond to metadata key exchange
-    MPACKET_HOST_SIGNATURE_OK,
-    MPACKET_HOST_SIGNATURE_FAILED,
+    // if it was succesfully completed.
+    MPACKET_METADATA_KEY_EXHCANGE_COMPLETE,
+
 
     // MUTKA_SERVER_ENABLE_CAPTCHA must be set for this to be used.
     // After the metadata keys have been exchanged

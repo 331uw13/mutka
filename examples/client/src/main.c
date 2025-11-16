@@ -15,6 +15,73 @@ void mutka_error(char* buffer, size_t size) {
     printf("[libmutka error]: %s\n", buffer);
 }
 
+/*
+int main(int argc, char** argv) {
+    mutka_set_errmsg_callback(mutka_error);
+
+    
+
+    // Alice --------------------
+
+
+    key_mldsa87_priv_t  alice_privkey;
+    key_mldsa87_publ_t  alice_publkey;
+    const char*  msg = "Test message";
+    const size_t msg_len = strlen(msg);
+
+    if(!mutka_openssl_MLDSA87_keypair(&alice_privkey, &alice_publkey)) {
+        printf("Failed to create keys.\n");
+    }
+
+
+    signature_mldsa87_t signature;
+
+    if(!mutka_openssl_MLDSA87_sign(
+                "CONTEXT",
+                &signature,
+                &alice_privkey,
+                msg,
+                msg_len
+                )) {
+        printf("Failed to sign.\n");
+    }
+
+
+    // ===================================================
+    // 
+    //  For example.. Bob has alices public key already
+    //  so he can verify it is alice. (Think with longterm keys)
+    // 
+    // ===================================================
+
+
+    // Bob --------------------
+
+
+    if(!mutka_openssl_MLDSA87_verify(
+                "CONTEXT",
+                &signature,
+                &alice_publkey,
+                msg,
+                msg_len)) {
+        printf("Failed to verify.\n");
+    }
+    else {
+        printf("Verified!\n");
+    }
+
+    return 0;
+}
+*/
+
+
+
+
+
+
+
+
+
 
 
 // Mutex is used for reading input because the main thread requires input as well.
@@ -92,13 +159,10 @@ int main(int argc, char** argv) {
     if(!mutka_validate_client_cfg(&config, nickname)) {
         return 1;
     }
- 
-    // If the client doesnt own "trusted-keys" for the nickname.
-    // Ask to generate them with user chosen passphase.
-    // That passphase is going to be used to decrypt the trusted private key.
-    // The trusted private key is used for authentication between clients.
-    if(!mutka_cfg_trustedkeys_exists(&config)) {
-        printf("\033[33mYour trusted-key was not found for nickname \"%s\"\n"
+
+
+    if(!mutka_client_identity_exists(&config)) {
+        printf("\033[33mYour identity-keys was not found for nickname \"%s\"\n"
                 "Would you like to generate it? (yes/no): \033[0m",
                 nickname);
         fflush(stdout);
@@ -109,15 +173,13 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        printf("Enter passphase for trusted-key: ");
+        printf("Enter passphase for encrypting private-identity: ");
         fflush(stdout);
         char passphase[512] = { 0 };
         size_t passphase_len = read(STDIN_FILENO, passphase, sizeof(passphase));
 
-        if(mutka_cfg_generate_trustedkeys(&config, passphase, passphase_len)) {
-            printf("\033[32mYour trusted-keys are generated.\n"
-                    "You should now add your peer's\ntrusted-key public key"
-                    " into '%s'\033[0m\n", config.trusted_peers_dir);
+        if(mutka_new_client_identity(&config, passphase, passphase_len)) {
+            printf("\033[32mYour identity-keys are generated.\033[0m\n");
         }
 
         memset(passphase, 0, sizeof(passphase));
@@ -125,23 +187,21 @@ int main(int argc, char** argv) {
     }
 
 
+    if(!mutka_read_public_identity(&config)) {
+        return 1;
+    }
 
-    // At this point the client_config should have the trusted_privkey_path assigned.
-    // Now it must be decrypted before use.
-    // The same passphase is needed here, when the trusted-keys were generated.
 
-    printf("Enter passphase for trusted-key: ");
+    printf("Enter passphase for private identity-key: ");
     fflush(stdout);
     char passphase[512] = { 0 };
     size_t passphase_len = read(STDIN_FILENO, passphase, sizeof(passphase));
 
-    if(!mutka_decrypt_trusted_privkey(&config, passphase, passphase_len)) {
+
+    if(!mutka_decrypt_client_identity(&config, passphase, passphase_len)) {
         return 1;
     }
 
-    if(!mutka_read_trusted_publkey(&config)) {
-        return 1;
-    }
 
 
     // Finally should be able to connect.
