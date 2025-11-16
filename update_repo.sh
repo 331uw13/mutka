@@ -9,7 +9,7 @@ fi
 (cd examples/server/ && make clean)
 (cd examples/client/ && make clean)
 
-rm ./examples/server/host_signature
+rm ./examples/server/host_keys
 
 git add .
 git commit -m "$1"
