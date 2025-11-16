@@ -19,6 +19,18 @@ typedef struct {
 signature_mldsa87_t;
 
 
+struct mutka_cipher_keys {
+    key128bit_t          x25519_privkey;
+    key128bit_t          x25519_publkey;
+    key128bit_t          x25519_shared_key;
+    
+    key_mlkem1024_priv_t mlkem_privkey;
+    key_mlkem1024_publ_t mlkem_publkey;
+    key128bit_t          mlkem_shared_key;
+};
+
+bool mutka_generate_cipher_keys(struct mutka_cipher_keys* keys);
+
 // TODO: Refactor to use inline function.
 #define MUTKA_CLEAR_KEY(key) memset(key.bytes, 0, sizeof(key.bytes))
 
@@ -82,9 +94,7 @@ bool mutka_openssl_encaps
 
 bool mutka_openssl_decaps
 (
-    uint8_t* unwrappedkey_out,
-    size_t   unwrappedkey_out_memsize,
-    size_t*  unwrappedkey_out_len,
+    key128bit_t* unwrappedkey_out,
     uint8_t* wrappedkey,
     size_t   wrappedkey_len,
     key_mlkem1024_priv_t* self_privkey

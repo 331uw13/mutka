@@ -83,19 +83,22 @@ struct mutka_client {
     int                  socket_fd;
     struct sockaddr_in   socket_addr;
 
-    
+    // Metadata keys.
+    struct mutka_cipher_keys mtdata_keys;
+
+
     // At client side these are its own local key pair.
     // And if at server side these are the client's serverside key pair
-    key128bit_t          metadata_publkey;
-    key128bit_t          metadata_privkey;
+    //key128bit_t          metadata_publkey;
+    //key128bit_t          metadata_privkey;
 
     // At client side this is serverside metadata public key.
     // And if at server side this is client's metadata public key.
-    key128bit_t          peer_metadata_publkey;
+    //key128bit_t          peer_metadata_publkey;
 
     // Shared key derived from peer public key and self private key
     // and passed through HKDF.
-    key128bit_t          metadata_shared_key;
+    //key128bit_t          metadata_shared_key;
 
 
     int flags;

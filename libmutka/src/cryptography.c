@@ -18,6 +18,21 @@ void mutka_dump_sig(signature_t* sig, const char* label) {
     mutka_dump_bytes((char*)sig->bytes, sizeof(sig->bytes), label);
 }
 
+bool mutka_generate_cipher_keys(struct mutka_cipher_keys* keys) {
+    if(!mutka_openssl_X25519_keypair(&keys->x25519_privkey, &keys->x25519_publkey)) {
+        return false;
+    }
+    if(!mutka_openssl_MLKEM1024_keypair(&keys->mlkem_privkey, &keys->mlkem_publkey)) {
+        return false;
+    }
+
+    memset(keys->x25519_shared_key.bytes, 0, sizeof(keys->x25519_shared_key.bytes));
+    memset(keys->mlkem_shared_key.bytes, 0, sizeof(keys->mlkem_shared_key.bytes));
+
+    return true;
+}
+
+
 static void openssl_error_ext(const char* file, const char* func, int line) {
     char buffer[256] = { 0 };
     ERR_error_string(ERR_get_error(), buffer);
@@ -332,9 +347,7 @@ out:
 
 bool mutka_openssl_decaps
 (
-    uint8_t* unwrappedkey_out,
-    size_t   unwrappedkey_out_memsize,
-    size_t*  unwrappedkey_out_len,
+    key128bit_t* unwrappedkey_out,
     uint8_t* wrappedkey,
     size_t   wrappedkey_len,
     key_mlkem1024_priv_t* self_privkey
@@ -366,7 +379,7 @@ bool mutka_openssl_decaps
 
     ctx = EVP_PKEY_CTX_new(pkey, NULL);
 
-    size_t unwrappedkey_len = unwrappedkey_out_memsize;
+    size_t unwrappedkey_len = sizeof(unwrappedkey_out->bytes);
 
     if(!EVP_PKEY_decapsulate_init(ctx, NULL)) {
         openssl_error();
@@ -374,13 +387,13 @@ bool mutka_openssl_decaps
     }
 
     if(!EVP_PKEY_decapsulate(ctx,
-                unwrappedkey_out, &unwrappedkey_len,
+                unwrappedkey_out->bytes, &unwrappedkey_len,
                 wrappedkey, wrappedkey_len)) {
         openssl_error();
         goto out;
     }
 
-    *unwrappedkey_out_len = unwrappedkey_len;
+    //*unwrappedkey_out_len = unwrappedkey_len;
 
     result = true;
 

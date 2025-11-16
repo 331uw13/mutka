@@ -7,7 +7,7 @@
 #include "string.h"
 #include "key.h"
 
-#define MUTKA_RAW_PACKET_DEFMEMSIZE (1024 * 16) 
+#define MUTKA_RAW_PACKET_DEFMEMSIZE (1024 * 24) 
 
 
 // Encoding options

@@ -177,7 +177,6 @@ bool mutka_get_hkdf_info(char* info, size_t info_memsize, enum mutka_hkdf_ctx co
             break;
     }
 
-out:
     return result;
 }
 
