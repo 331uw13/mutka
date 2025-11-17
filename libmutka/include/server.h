@@ -10,8 +10,9 @@
 
 
 // ---- Server config flags ----
-#define MUTKA_SERVER_REUSEADDR        (1 << 0)
-#define MUTKA_SERVER_ENABLE_CAPTCHA   (1 << 1)
+#define MUTKA_SERVER_REUSEADDR         (1 << 0)
+#define MUTKA_SERVER_CAPTCHA_ENABLED   (1 << 1)
+
 
 struct mutka_server;
 
@@ -19,6 +20,7 @@ struct mutka_server_cfg {
     uint16_t port;
     uint32_t max_clients;
     int      flags;
+    int8_t   max_captcha_retries;
 
     bool(*accept_new_hostkeys_callback)();
     void(*client_connected_callback)(struct mutka_server*, struct mutka_client*);
@@ -52,8 +54,12 @@ struct mutka_server* mutka_create_server
     const char* hostkeys_path
 );
 
-void mutka_close_server(struct mutka_server* server);
-void mutka_server_remove_client(struct mutka_server* server, struct mutka_client* client);
+void mutka_server_remove_client
+(
+    struct mutka_server* server,
+    struct mutka_client* client
+);
 
+void mutka_close_server(struct mutka_server* server);
 
 #endif

@@ -32,7 +32,13 @@ void mutka_str_clear(struct mutka_str* str);
 // Makes sure str can hold 'size' number of bytes.
 void mutka_str_reserve(struct mutka_str* str, uint32_t size);
 
+// Get byte at end of string.
 char mutka_str_lastbyte(struct mutka_str* str);
+
+// Remove last byte from string.
+void mutka_str_pop_end(struct mutka_str* str);
+
+// Append byte at end of string.
 bool mutka_str_append(struct mutka_str* str, char* data, uint32_t size);
 
 
@@ -42,6 +48,7 @@ bool mutka_str_append(struct mutka_str* str, char* data, uint32_t size);
 // if not found -1 is returned.
 ssize_t mutka_charptr_find(char* data, size_t data_size, char* part, size_t part_size);
 
+bool mutka_strcmp(char* A, size_t A_size, char* B, size_t B_size);
 
 //void mutka_bytes_to_hexstr(struct mutka_str* in, struct mutka_str* out);
 //void mutka_hexstr_to_bytes(struct mutka_str* in, struct mutka_str* out);

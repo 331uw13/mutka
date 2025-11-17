@@ -191,7 +191,6 @@ static void p_write_noise(char* buffer, size_t buffer_size, size_t buffer_width)
             }
         }
     }
-
 }
 
 char* get_random_captcha_buffer(size_t* buffer_size_out, char* answer_out, size_t answer_out_len) {

@@ -15,74 +15,6 @@ void mutka_error(char* buffer, size_t size) {
     printf("[libmutka error]: %s\n", buffer);
 }
 
-/*
-int main(int argc, char** argv) {
-    mutka_set_errmsg_callback(mutka_error);
-
-    
-
-    // Alice --------------------
-
-
-    key_mldsa87_priv_t  alice_privkey;
-    key_mldsa87_publ_t  alice_publkey;
-    const char*  msg = "Test message";
-    const size_t msg_len = strlen(msg);
-
-    if(!mutka_openssl_MLDSA87_keypair(&alice_privkey, &alice_publkey)) {
-        printf("Failed to create keys.\n");
-    }
-
-
-    signature_mldsa87_t signature;
-
-    if(!mutka_openssl_MLDSA87_sign(
-                "CONTEXT",
-                &signature,
-                &alice_privkey,
-                msg,
-                msg_len
-                )) {
-        printf("Failed to sign.\n");
-    }
-
-
-    // ===================================================
-    // 
-    //  For example.. Bob has alices public key already
-    //  so he can verify it is alice. (Think with longterm keys)
-    // 
-    // ===================================================
-
-
-    // Bob --------------------
-
-
-    if(!mutka_openssl_MLDSA87_verify(
-                "CONTEXT",
-                &signature,
-                &alice_publkey,
-                msg,
-                msg_len)) {
-        printf("Failed to verify.\n");
-    }
-    else {
-        printf("Verified!\n");
-    }
-
-    return 0;
-}
-*/
-
-
-
-
-
-
-
-
-
-
 
 // Mutex is used for reading input because the main thread requires input as well.
 // Otherwise both will get the same input...
@@ -118,20 +50,39 @@ bool accept_new_trusted_host(struct mutka_client* client, struct mutka_str* host
 }
 
 
-bool accept_host_signature_change(struct mutka_client* client, struct mutka_str* host_publkey) {
+bool accept_hostkey_change(struct mutka_client* client, struct mutka_str* host_publkey) {
     
-    printf("\033[31mWARNING: SERVER SIGNATURE HAS CHANGED!\n"
+    printf("\033[31mWARNING: SERVER PUBLIC KEY HAS CHANGED!\n"
             "Someone may be trying to tamper with the server keys\n"
             "\n"
             "If you choose \"yes\" the old key will be overwritten and connection can continue (may be risky)\n"
             "If you choose \"no\" you will be disconnected\n"
-            "Are you really sure you want to continue?\n\n"
+            "\n"
+            "Are you really sure you want to continue?\n"
             "(yes/no): \033[0m");
     fflush(stdout);
 
     char user_choise = read_user_input_yes_or_no();
     return ((user_choise == 'Y') || (user_choise == 'y'));
 }
+
+
+// This function do not require to be blocking.
+// mutka_send_captcha_answer() can be called from anywhere.
+void confirm_captcha(struct mutka_client* client, char* captcha_buffer) {
+    pthread_mutex_lock(&stdin_read_mutex);
+    printf("%s\n", captcha_buffer);
+    printf("Server requires captcha to be completed.\n"
+            "Answer: ");
+    fflush(stdout);
+
+    char answer[32] = { 0 };
+    read(STDIN_FILENO, answer, sizeof(answer)-1);
+    pthread_mutex_unlock(&stdin_read_mutex);
+
+    mutka_send_captcha_answer(client, answer, strlen(answer));
+}
+
 
 
 int main(int argc, char** argv) {
@@ -152,8 +103,9 @@ int main(int argc, char** argv) {
     {
         .use_default_cfgdir = true, // "use /home/user/.mutka/"
 
-        .accept_new_trusted_host_callback = accept_new_trusted_host,
-        .accept_host_signature_change_callback = accept_host_signature_change
+        .confirm_server_captcha              = confirm_captcha,
+        .accept_new_trusted_host_callback    = accept_new_trusted_host,
+        .accept_hostkey_change_callback      = accept_hostkey_change
     };
 
     if(!mutka_validate_client_cfg(&config, nickname)) {

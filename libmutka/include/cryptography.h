@@ -153,7 +153,7 @@ bool mutka_openssl_MLDSA87_sign
     const char* context_str,
     signature_mldsa87_t* signature,
     key_mldsa87_priv_t* self_privkey,
-    char* data,
+    uint8_t* data,
     size_t data_size
 );
 
@@ -162,7 +162,7 @@ bool mutka_openssl_MLDSA87_verify
     const char* context_str,
     signature_mldsa87_t* signature,
     key_mldsa87_publ_t*  peer_publkey,
-    char* data,
+    uint8_t* data,
     size_t data_size
 );
 

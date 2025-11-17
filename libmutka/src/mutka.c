@@ -147,36 +147,3 @@ bool mutka_decode(uint8_t* buf, size_t buf_memsize, char* encoded, size_t size) 
 }
 
 
-
-static bool p_buffer_append(char* buffer, size_t buffer_memsize, const char* text) {
-    const size_t text_len = strlen(text);
-    const size_t buffer_len = strlen(buffer);
-
-    if(text_len + buffer_len >= buffer_memsize) {
-        return false;
-    }
-
-    memmove(buffer + buffer_len, text, text_len);
-    return true;
-}
-
-bool mutka_get_hkdf_info(char* info, size_t info_memsize, enum mutka_hkdf_ctx context) {
-    bool result = false;
-
-    switch(context) {
-        case HKDFCTX_METADATA_KEYS:
-            result = p_buffer_append(info, info_memsize, "|hkdfctx_metadata_keys");
-            break;
-
-        case HKDFCTX_MESSAGE_KEYS:
-            result = p_buffer_append(info, info_memsize, "|hkdfctx_message_keys");
-            break;
-
-        default:
-            mutka_set_errmsg("%s: Unknown context: %i", __func__, (int)context);
-            break;
-    }
-
-    return result;
-}
-

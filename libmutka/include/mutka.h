@@ -42,17 +42,4 @@ void mutka_encode(struct mutka_str* str, uint8_t* bytes, size_t size);
 bool mutka_decode(uint8_t* buf, size_t buf_memsize, char* encoded, size_t size);
 
 
-enum mutka_hkdf_ctx {
-    HKDFCTX_METADATA_KEYS,
-    HKDFCTX_MESSAGE_KEYS
-};
-
-bool mutka_get_hkdf_info
-(
-    char* info,
-    size_t info_memsize,
-    enum mutka_hkdf_ctx context
-);
-
-
 #endif

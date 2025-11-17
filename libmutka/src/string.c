@@ -145,6 +145,15 @@ char mutka_str_lastbyte(struct mutka_str* str) {
     return str->bytes[(str->size > 0) ? str->size-1 : 0];
 }
 
+void mutka_str_pop_end(struct mutka_str* str) {
+    if(str->size == 0) {
+        return;
+    }
+
+    str->bytes[(str->size > 0) ? str->size-1 : 0] = 0;
+    str->size--;
+}
+
 bool mutka_str_append(struct mutka_str* str, char* data, uint32_t size) {
     if(!mutka_str_memcheck(str, size)) {
         return false;
@@ -195,5 +204,20 @@ ssize_t mutka_charptr_find(char* data, size_t data_size, char* part, size_t part
 skip:
     return found_index;
 }
+
+bool mutka_strcmp(char* A, size_t A_size, char* B, size_t B_size) {
+    if(A_size != B_size) {
+        return false;
+    }
+
+    for(size_t i = 0; i < A_size; i++) {
+        if(A[i] != B[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 
 

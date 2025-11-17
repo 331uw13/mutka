@@ -786,7 +786,7 @@ bool mutka_openssl_MLDSA87_sign
     const char* context_str,
     signature_mldsa87_t* signature,
     key_mldsa87_priv_t* self_privkey,
-    char* data,
+    uint8_t* data,
     size_t data_size
 ){
     bool result = false;
@@ -795,27 +795,7 @@ bool mutka_openssl_MLDSA87_sign
     EVP_SIGNATURE* sig_alg = NULL;
 
     const char* method = "ML-DSA-87";
-
-    
     pkey = EVP_PKEY_new_raw_private_key_ex(NULL, method, NULL, self_privkey->bytes, sizeof(self_privkey->bytes));
-
-    /*
-    EVP_PKEY_CTX* pkey_ctx = EVP_PKEY_CTX_new_from_name(NULL, "ML-DSA-87", NULL);
-
-    if(EVP_PKEY_keygen_init(pkey_ctx) <= 0) {
-        openssl_error();
-        goto out;
-    }
-
-    if(EVP_PKEY_keygen(pkey_ctx, &pkey) <= 0) {
-        openssl_error();
-        goto out;
-    }
-
-    if(!pkey) {
-        openssl_error();
-        goto out;
-    }*/
 
     ctx = EVP_PKEY_CTX_new_from_pkey(NULL, pkey, NULL);
     if(!ctx) {
@@ -843,7 +823,7 @@ bool mutka_openssl_MLDSA87_sign
         goto out;
     }
 
-    if(EVP_PKEY_sign(ctx, NULL, &signature_len, (const uint8_t*)data, data_size) <= 0) {
+    if(EVP_PKEY_sign(ctx, NULL, &signature_len, data, data_size) <= 0) {
         openssl_error();
         goto out;
     }
@@ -899,7 +879,7 @@ bool mutka_openssl_MLDSA87_verify
     const char* context_str,
     signature_mldsa87_t* signature,
     key_mldsa87_publ_t* verifykey,
-    char* data,
+    uint8_t* data,
     size_t data_size
 ){
     bool result = false;
@@ -939,7 +919,7 @@ bool mutka_openssl_MLDSA87_verify
         goto out;
     }
 
-    result = (EVP_PKEY_verify(ctx, signature->bytes, sizeof(signature->bytes), (const uint8_t*)data, data_size) == 1);
+    result = (EVP_PKEY_verify(ctx, signature->bytes, sizeof(signature->bytes), data, data_size) == 1);
 
 out:
     if(sig_alg) {

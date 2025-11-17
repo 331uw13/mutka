@@ -92,7 +92,11 @@ static bool p_mutka_add_config_dir
 }
 
 
-bool mutka_validate_client_cfg(struct mutka_client_cfg* config, char* nickname) {
+bool mutka_validate_client_cfg
+(
+    struct mutka_client_cfg* config,
+    char* nickname
+){
     bool result = false;
 
     if(!config->accept_new_trusted_host_callback) {
@@ -100,8 +104,13 @@ bool mutka_validate_client_cfg(struct mutka_client_cfg* config, char* nickname) 
         goto out;
     }
 
-    if(!config->accept_host_signature_change_callback) {
-        mutka_set_errmsg("\"accept_host_public_key_change_callback\" is missing.");
+    if(!config->accept_hostkey_change_callback) {
+        mutka_set_errmsg("\"accept_hostkey_change_callback\" is missing.");
+        goto out;
+    }
+
+    if(!config->confirm_server_captcha) {
+        mutka_set_errmsg("\"confirm_server_captcha\" is missing.");
         goto out;
     }
 
@@ -232,6 +241,8 @@ bool mutka_validate_client_cfg(struct mutka_client_cfg* config, char* nickname) 
     printf("nickname              = '%s'\n", config->nickname);
     result = true;
 
+    config->flags |= MUTKA_CCFLG_CONFIG_VALIDATED;
+
 free_and_out:
     mutka_str_free(&cfg_root);
     mutka_str_free(&cfg_root_tmp);
@@ -239,320 +250,6 @@ free_and_out:
 out:
     return result;
 }
-
-
-/*
-bool mutka_cfg_generate_trustedkeys
-(
-    struct mutka_client_cfg* config,
-    char* privkey_passphase,
-    size_t passphase_len
-){
-    bool result = false;
-
-    if(passphase_len < 8) {
-        mutka_set_errmsg("Trusted private key passphase should NOT be less than 8 characters long.");
-        goto out;
-    }
-
-    if(!mutka_mkdir_p(config->trusted_peers_dir, S_IRWXU)) {
-        goto out;
-    }
-
-    if(!mutka_file_exists(config->trusted_privkey_path)) {
-        if(creat(config->trusted_privkey_path, S_IRUSR | S_IWUSR) < 0) {
-            mutka_set_errmsg("Failed to create trusted"
-                    " private key file \"%s\" | %s", config->trusted_privkey_path, strerror(errno));
-            goto out;
-        }
-    }
-
-    if(!mutka_file_exists(config->trusted_publkey_path)) {
-        if(creat(config->trusted_publkey_path, S_IRUSR | S_IWUSR) < 0) {
-            mutka_set_errmsg("Failed to create trusted"
-                    " public key file \"%s\" | %s", config->trusted_publkey_path, strerror(errno));
-            goto out;
-        }
-    }
-
-    key128bit_t trusted_privkey;
-    key128bit_t trusted_publkey;
-
-    MUTKA_CLEAR_KEY(trusted_privkey);
-    MUTKA_CLEAR_KEY(trusted_publkey);
-
-    //struct mutka_keypair trusted_keys = mutka_init_keypair();
-    if(!mutka_openssl_ED25519_keypair(&trusted_privkey, &trusted_publkey)) {
-        goto out;
-    }
-
-
-    // Use scrypt to derieve stronger and more suitable key for AES.
-    // It will be used to encrypt the ED25519 private key.
-
-    struct mutka_str derived_key;
-    mutka_str_alloc(&derived_key);
-
-    uint8_t scrypt_salt[SCRYPT_SALT_LEN] = { 0 };
-    RAND_bytes(scrypt_salt, sizeof(scrypt_salt));
-
-    mutka_openssl_scrypt(
-            &derived_key, 
-            32, // Output size
-            privkey_passphase, passphase_len,
-            scrypt_salt, sizeof(scrypt_salt));
-
-
-    struct mutka_str privkey_cipher;
-    mutka_str_alloc(&privkey_cipher);
-
-    uint8_t gcm_iv[AESGCM_IV_LEN] = { 0 };
-    RAND_bytes(gcm_iv, sizeof(gcm_iv));
-
-    uint8_t gcm_tag[AESGCM_TAG_LEN] = { 0 };
-
-    //struct mutka_str gcm_tag;
-    //mutka_str_alloc(&gcm_tag);
-
-    if(!mutka_openssl_AES256GCM_encrypt(
-            &privkey_cipher,
-            gcm_tag,
-            (uint8_t*)derived_key.bytes,
-            gcm_iv,
-            MUTKA_VERSION_STR, strlen(MUTKA_VERSION_STR),
-            trusted_privkey.bytes,
-            sizeof(trusted_privkey.bytes))) {
-        mutka_set_errmsg("Failed to encrypt trusted private key.");
-        goto free_and_out;
-    }
-
-    mutka_file_clear(config->trusted_privkey_path);
-
-
-    // Temporary stuff...
-    
-    if(!mutka_file_append(config->trusted_privkey_path, scrypt_salt, sizeof(scrypt_salt))) {
-        mutka_set_errmsg("Failed to save trusted private key's scrypt salt.");
-        goto free_and_out;
-    }
-
-    if(!mutka_file_append(config->trusted_privkey_path, (char*)&privkey_cipher.size, sizeof(privkey_cipher.size))) {
-        mutka_set_errmsg("Failed to save trusted private key's cipher length.");
-        goto free_and_out;
-    }
-
-    if(!mutka_file_append(config->trusted_privkey_path, privkey_cipher.bytes, privkey_cipher.size)) {
-        mutka_set_errmsg("Failed to save trusted private key's cipher.");
-        goto free_and_out;
-    }
-
-    if(!mutka_file_append(config->trusted_privkey_path, gcm_iv, sizeof(gcm_iv))) {
-        mutka_set_errmsg("Failed to save trusted private key's AES GCM IV.");
-        goto free_and_out;
-    }
-
-    if(!mutka_file_append(config->trusted_privkey_path, gcm_tag, sizeof(gcm_tag))) {
-        mutka_set_errmsg("Failed to save trusted private key's AES GCM TAG.");
-        goto free_and_out;
-    }
-
-    if(!mutka_file_append(config->trusted_privkey_path, MUTKA_VERSION_STR, strlen(MUTKA_VERSION_STR))) {
-        mutka_set_errmsg("Failed to save trusted private key's AES GCM AAD.");
-        goto free_and_out;
-    }
-
-
-
-    // Save trusted public key
-    
-    mutka_file_clear(config->trusted_publkey_path); 
-    if(!mutka_file_append(
-                config->trusted_publkey_path,
-                trusted_publkey.bytes,
-                sizeof(trusted_publkey.bytes))) {
-        mutka_set_errmsg("Failed to save trusted public key.");
-        goto free_and_out;
-    }
-
-    result = true;
-
-free_and_out:
-
-    mutka_str_clear(&derived_key);
-    mutka_str_free(&derived_key);
-    mutka_str_free(&privkey_cipher);
-
-out:
-    return result;
-}
-*/
-
-/*
-bool mutka_read_trusted_publkey(struct mutka_client_cfg* config) {
-    bool result = false;
-
-    char* publkey_file = NULL;
-    size_t publkey_file_size = 0;
-
-    if(!mutka_map_file(config->trusted_publkey_path, PROT_READ, &publkey_file, &publkey_file_size)) {
-        goto out;
-    }
-    if(publkey_file_size == 0) {
-        mutka_set_errmsg("Trusted public key file is empty.");
-        goto out;
-    }
-
-    if(publkey_file_size != sizeof(config->trusted_publkey)) {
-        mutka_set_errmsg("Unexpected trusted public key size: %li", publkey_file_size);
-        goto free_and_out;
-    }
-
-    memmove(config->trusted_publkey, publkey_file, sizeof(config->trusted_publkey));
-    config->flags |= MUTKA_CCFG_HAS_TRUSTED_PUBLKEY;
-
-
-free_and_out:
-
-    munmap(publkey_file, publkey_file_size);
-    result = true;
-
-out:
-
-    return result;
-}
-
-bool mutka_decrypt_trusted_privkey
-(
-    struct mutka_client_cfg* config,
-    char* passphase, size_t passphase_len
-){
-    bool result = false;
-
-    char* privkey_file = NULL;
-    size_t privkey_file_size = 0;
-
-    if(!mutka_map_file(config->trusted_privkey_path, PROT_READ, &privkey_file, &privkey_file_size)) {
-        goto out;
-    }
-
-    if(privkey_file_size == 0) {
-        mutka_set_errmsg("Trusted private key file is empty.");
-        goto out;
-    }
-
-    struct mutka_str private_key;
-    struct mutka_str key_cipher;
-    struct mutka_str gcm_aad;
-    struct mutka_str derived_key;
-    mutka_str_alloc(&derived_key);
-    mutka_str_alloc(&key_cipher);
-    mutka_str_alloc(&gcm_aad);
-    mutka_str_alloc(&private_key);
-
-    char    gcm_tag[AESGCM_TAG_LEN] = { 0 };
-    uint8_t gcm_iv[AESGCM_IV_LEN] = { 0 };
-    uint8_t scrypt_salt[SCRYPT_SALT_LEN] = { 0 };
-
-    size_t byte_offset = 0;
-
-
-    
-    // Read scrypt salt.
-    memmove(scrypt_salt, &privkey_file[byte_offset], sizeof(scrypt_salt));
-    byte_offset += sizeof(scrypt_salt);
-    if(byte_offset >= privkey_file_size) {
-        mutka_set_errmsg("Unexpected EOF (reading scrypt salt).");
-        goto free_and_out;
-    }
-    
-    // Read cipher length.
-    int cipher_length = 0;
-    memmove(&cipher_length, &privkey_file[byte_offset], sizeof(cipher_length));
-    byte_offset += sizeof(cipher_length);
-    if(byte_offset >= privkey_file_size) {
-        mutka_set_errmsg("Unexpected EOF (reading key cipher length).");
-        goto free_and_out;
-    }
-
-    // Read key cipher.
-    mutka_str_reserve(&key_cipher, cipher_length);
-    mutka_str_move(&key_cipher, &privkey_file[byte_offset], cipher_length);
-    byte_offset += cipher_length;
-    if(byte_offset >= privkey_file_size) {
-        mutka_set_errmsg("Unexpected EOF (reading key cipher).");
-        goto free_and_out;
-    }
-
-    // Read GCM IV.
-    memmove(gcm_iv, &privkey_file[byte_offset], sizeof(gcm_iv));
-    byte_offset += sizeof(gcm_iv);
-    if(byte_offset >= privkey_file_size) {
-        mutka_set_errmsg("Unexpected EOF (reading GCM IV).");
-        goto free_and_out;
-    }
-
-    // Read GCM TAG.
-    memmove(gcm_tag, &privkey_file[byte_offset], sizeof(gcm_tag));
-    byte_offset += sizeof(gcm_tag);
-    if(byte_offset >= privkey_file_size) {
-        mutka_set_errmsg("Unexpected EOF (reading GCM TAG).");
-        goto free_and_out;
-    }
-
-    // Read GCM AAD.
-    const int64_t remaining = privkey_file_size - byte_offset;
-    if(remaining < 0) {
-        mutka_set_errmsg("Unexpected EOF (reading GCM AAD).");
-        goto free_and_out;
-    }
-    mutka_str_reserve(&gcm_aad, remaining);
-    mutka_str_move(&gcm_aad, &privkey_file[byte_offset], remaining);
-
-
-    // Get key for decrypting.
-    mutka_openssl_scrypt(
-            &derived_key, 
-            32, // Output key size
-            passphase, passphase_len,
-            scrypt_salt, sizeof(scrypt_salt));
-    
-
-    // Now all information should be collected
-    // to decrypt the trusted private key.
-    if(!mutka_openssl_AES256GCM_decrypt(
-                &private_key,
-                (uint8_t*)derived_key.bytes,
-                gcm_iv,
-                gcm_aad.bytes, gcm_aad.size,
-                gcm_tag, AESGCM_TAG_LEN,
-                key_cipher.bytes, key_cipher.size)) {
-        mutka_set_errmsg("Failed to decrypt trusted private key.");
-        goto free_and_out;
-    }
-    
-    if(private_key.size != ED25519_KEYLEN) {
-        mutka_set_errmsg("Unexpected trusted private key size: %i", private_key.size);
-        goto free_and_out;
-    }
-
-    
-    memmove(config->trusted_privkey, private_key.bytes, sizeof(config->trusted_privkey));
-    config->flags |= MUTKA_CCFG_HAS_TRUSTED_PRIVKEY;
-    result = true;
-
-free_and_out:
-
-    mutka_str_clear(&private_key);
-    mutka_str_free(&private_key);
-    mutka_str_free(&derived_key);
-    mutka_str_free(&key_cipher);
-    mutka_str_free(&gcm_aad);
-    munmap(privkey_file, privkey_file_size);
-
-out:
-    return result;
-}
-*/
 
 bool mutka_read_public_identity(struct mutka_client_cfg* config) {
 
@@ -581,7 +278,8 @@ bool mutka_client_identity_exists(struct mutka_client_cfg* config) {
 bool mutka_new_client_identity
 (
     struct mutka_client_cfg* config,
-    char* passphase, size_t passphase_len
+    char* passphase, 
+    size_t passphase_len
 ){
     bool result = false;
     key_mldsa87_publ_t public_key;
@@ -629,7 +327,7 @@ bool mutka_new_client_identity
                 gcm_aad_len,
                 private_key.bytes,
                 sizeof(private_key.bytes))) {
-        mutka_set_errmsg("Failed to encrypt private identity key.");
+        mutka_set_errmsg("Failed to encrypt private-identity key.");
         goto free_and_out;
     }
 
@@ -711,7 +409,8 @@ out:
 bool mutka_decrypt_client_identity
 (
     struct mutka_client_cfg* config,
-    char* passphase, size_t passphase_len
+    char* passphase, 
+    size_t passphase_len
 ){
     bool result = false;
 
@@ -838,6 +537,7 @@ bool mutka_decrypt_client_identity
             decrypted_privkey.size);
 
     result = true;
+    config->flags |= MUTKA_CCFLG_HAS_IDENTITY_KEYS;
 
 unmap_and_out:
     munmap(file_data, file_size);
@@ -852,20 +552,24 @@ out:
 
 
 
-struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, char* port) {
+struct mutka_client* mutka_connect
+(
+    struct mutka_client_cfg* config,
+    char* host,
+    char* port
+){
     struct mutka_client* client = NULL;
 
-    /*
-    if(!(config->flags & MUTKA_CCFG_HAS_TRUSTED_PUBLKEY)) {
-        mutka_set_errmsg("Client configuration doesnt contain trusted PUBLIC key.");
+    if(!(config->flags & MUTKA_CCFLG_HAS_IDENTITY_KEYS)) {
+        mutka_set_errmsg("Client configuration doesnt contain identity keys.");
         goto out;
     }
 
-    if(!(config->flags & MUTKA_CCFG_HAS_TRUSTED_PRIVKEY)) {
-        mutka_set_errmsg("Client configuration doesnt contain trusted PRIVATE key.");
+    if(!(config->flags & MUTKA_CCFLG_CONFIG_VALIDATED)) {
+        mutka_set_errmsg("Client configuration doesnt seem to be validated.");
         goto out;
     }
-    */
+
 
     const int port_num = atoi(port);
     if((port_num < 0) || (port_num > UINT16_MAX)) {
@@ -1079,6 +783,7 @@ static bool p_mutka_client_save_trusted_host
     return mutka_file_append(client->config.trusted_hosts_path, buffer, sizeof(buffer));
 }
 
+
 static bool p_mutka_client_process_host_signature(struct mutka_client* client) {
     bool result = false;
  
@@ -1169,7 +874,7 @@ static bool p_mutka_client_process_host_signature(struct mutka_client* client) {
     }
 
     if(!host_publkey_match) {
-        const bool can_overwrite = client->config.accept_host_signature_change_callback(client, NULL);
+        const bool can_overwrite = client->config.accept_hostkey_change_callback(client, NULL);
         if(!can_overwrite) {
             goto unmap_and_out;
         }
@@ -1179,9 +884,14 @@ static bool p_mutka_client_process_host_signature(struct mutka_client* client) {
                 host_publkey.bytes,
                 sizeof(host_publkey.bytes));
 
-
-        // TODO: msync();  <- fucking important.
+        // Synchronize memory to avoid undefined reads in the future.
+        msync(hosts_file, hosts_file_size, MS_SYNC);
     }
+    
+
+    memmove(client->host_mldsa87_publkey.bytes,
+            host_publkey.bytes,
+            sizeof(host_publkey.bytes));
 
     result = true;
 
@@ -1193,6 +903,23 @@ out:
         client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
     }
     return result;
+}
+
+void mutka_send_captcha_answer(struct mutka_client* client, char* answer, size_t answer_len) {
+    if(!(client->flags & MUTKA_CLFLG_WAITING_CAPTCHA_INPUT)) {
+        mutka_set_errmsg("%s: Server has not requested a captcha answer.", __func__);
+        return;
+    }
+
+    mutka_rpacket_prep(&client->out_raw_packet, MPACKET_CAPTCHA);
+    mutka_rpacket_add_ent(&client->out_raw_packet,
+            "answer",
+            answer,
+            answer_len,
+            RPACKET_ENCODE_NONE);
+
+    mutka_send_clear_rpacket(client->socket_fd, &client->out_raw_packet);
+    client->flags &= ~MUTKA_CLFLG_WAITING_CAPTCHA_INPUT;
 }
 
 void mutka_client_handle_packet(struct mutka_client* client) {
@@ -1209,10 +936,14 @@ void mutka_client_handle_packet(struct mutka_client* client) {
     switch(client->inpacket.id) {
 
         case MPACKET_CAPTCHA:
-            printf("MPACKET_CAPTCHA: (NOT IMPLEMENTED)\n");
+            struct mutka_str* captcha_ascii = &client->inpacket.elements[0].data;
+            mutka_str_nullterm(captcha_ascii);
+
+            client->flags |= MUTKA_CLFLG_WAITING_CAPTCHA_INPUT;
+            client->config.confirm_server_captcha(client, captcha_ascii->bytes);
             return;
 
-        case MPACKET_HOST_SIGNATURE: 
+        case MPACKET_HOST_PUBLIC_KEY: 
             if(client->inpacket.num_elements != 1) {
                 mutka_set_errmsg("Failed to receive host public key.");
                 return;
@@ -1226,43 +957,56 @@ void mutka_client_handle_packet(struct mutka_client* client) {
             return;
         
         case MPACKET_EXCHANGE_METADATA_KEYS:
-            if(client->inpacket.num_elements != 4) {
-                mutka_set_errmsg("Failed to receive complete handshake packet.");
+            if(client->inpacket.num_elements != 5) {
+                mutka_set_errmsg("Failed to receive complete metadata key exchange packet.");
                 return;
             }
             {
+                struct mutka_packet_elem* peer_x25519_elem       = &client->inpacket.elements[0];
+                struct mutka_packet_elem* mlkem_wrapped_elem     = &client->inpacket.elements[1];
+                struct mutka_packet_elem* signature_elem         = &client->inpacket.elements[2];
+                struct mutka_packet_elem* hkdf_salt_x25519_elem  = &client->inpacket.elements[3];
+                struct mutka_packet_elem* hkdf_salt_mlkem_elem   = &client->inpacket.elements[4];
 
-                struct mutka_packet_elem* peer_x25519_elem   = &client->inpacket.elements[0];
-                struct mutka_packet_elem* wrapped_mlkem_elem = &client->inpacket.elements[1];
-                struct mutka_packet_elem* hkdf_salt_x25519_elem  = &client->inpacket.elements[2];
-                struct mutka_packet_elem* hkdf_salt_mlkem_elem  = &client->inpacket.elements[3];
+                uint8_t  hkdf_salt_x25519 [HKDF_SALT_LEN] = { 0 };
+                uint8_t  hkdf_salt_mlkem  [HKDF_SALT_LEN] = { 0 };
 
-                uint8_t  hkdf_salt_x25519[HKDF_SALT_LEN] = { 0 };
-                uint8_t  hkdf_salt_mlkem[HKDF_SALT_LEN] = { 0 };
-
-                key128bit_t   peer_x25519_publkey;
-                uint8_t       wrapped_mlkem[mutka_get_decoded_buffer_len(wrapped_mlkem_elem->data.size)];
+                signature_mldsa87_t signature;
+                key128bit_t         peer_x25519_publkey;
+                key128bit_t         mlkem_shared_secret;
+                uint8_t             mlkem_wrapped [mutka_get_decoded_buffer_len(mlkem_wrapped_elem->data.size)];
 
                 if(!mutka_decode(peer_x25519_publkey.bytes, sizeof(peer_x25519_publkey.bytes),
                             peer_x25519_elem->data.bytes,
                             peer_x25519_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to decode peer X25519 public key.");
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
+                            "Failed to decode peer X25519 public key.");
                     client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
                     return;
                 }
 
-                if(!mutka_decode(wrapped_mlkem, sizeof(wrapped_mlkem),
-                            wrapped_mlkem_elem->data.bytes,
-                            wrapped_mlkem_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to decode wrapped ML-KEM-1024 key.");
+                if(!mutka_decode(mlkem_wrapped, sizeof(mlkem_wrapped),
+                            mlkem_wrapped_elem->data.bytes,
+                            mlkem_wrapped_elem->data.size)) {
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
+                            "Failed to decode wrapped ML-KEM-1024 key.");
                     client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
                     return;
                 }
 
+                if(!mutka_decode(signature.bytes, sizeof(signature.bytes),
+                            signature_elem->data.bytes,
+                            signature_elem->data.size)) {
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
+                            "Failed to decode signature.");
+                    client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
+                    return;
+                }
                 if(!mutka_decode(hkdf_salt_x25519, sizeof(hkdf_salt_x25519),
                             hkdf_salt_x25519_elem->data.bytes,
                             hkdf_salt_x25519_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to decode HKDF salt for X25519 key derivation.");
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
+                            "Failed to decode HKDF salt for X25519 key derivation.");
                     client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
                     return;
                 }
@@ -1270,7 +1014,31 @@ void mutka_client_handle_packet(struct mutka_client* client) {
                 if(!mutka_decode(hkdf_salt_mlkem, sizeof(hkdf_salt_mlkem),
                             hkdf_salt_mlkem_elem->data.bytes,
                             hkdf_salt_mlkem_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to decode HKDF salt for ML-KEM-1024 key derivation.");
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
+                            "Failed to decode HKDF salt for ML-KEM-1024 key derivation.");
+                    client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
+                    return;
+                }
+
+                // Server combines X25519 public key hash + wrapped ML-KEM-1024 key hash.
+                // and it is used as data for signature.
+                uint8_t peer_keys_combined_hash[SHA512_DIGEST_LENGTH * 2] = { 0 };
+
+                SHA512(peer_x25519_publkey.bytes,
+                        sizeof(peer_x25519_publkey.bytes),
+                        peer_keys_combined_hash);
+
+                SHA512(mlkem_wrapped,
+                        sizeof(mlkem_wrapped),
+                        peer_keys_combined_hash + SHA512_DIGEST_LENGTH);
+
+                if(!mutka_openssl_MLDSA87_verify(
+                            MUTKA_VERSION_STR"(METADATAKEYS_SIGN_FROM_SERVER)",
+                            &signature,
+                            &client->host_mldsa87_publkey,
+                            peer_keys_combined_hash,
+                            sizeof(peer_keys_combined_hash))) {
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Cant verify host keys.");
                     client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
                     return;
                 }
@@ -1286,19 +1054,20 @@ void mutka_client_handle_packet(struct mutka_client* client) {
                     client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
                     return;
                 }
-                
-                key128bit_t mlkem_shared_secret;
 
+                // Get mlkem shared secret.
                 if(!mutka_openssl_decaps(
                             &mlkem_shared_secret,
-                            wrapped_mlkem,
-                            sizeof(wrapped_mlkem),
+                            mlkem_wrapped,
+                            sizeof(mlkem_wrapped),
                             &client->mtdata_keys.mlkem_privkey)) {
                     mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to decapsulate ML-KEM-1024 key.");
                     client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
                     return;
                 }
 
+                // Pass mlkem shared secret through HKDF
+                // to get mlkem shared key.
                 if(!mutka_openssl_HKDF(
                             client->mtdata_keys.mlkem_shared_key.bytes,
                             sizeof(client->mtdata_keys.mlkem_shared_key.bytes),

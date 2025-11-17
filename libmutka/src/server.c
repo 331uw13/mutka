@@ -140,7 +140,7 @@ struct mutka_server* mutka_create_server
     const char* hostkeys_path
 ){ 
 
-    if((config.flags & MUTKA_SERVER_ENABLE_CAPTCHA)) {
+    if((config.flags & MUTKA_SERVER_CAPTCHA_ENABLED)) {
         if(!ascii_captcha_init()) {
             mutka_set_errmsg("Failed to initialize captcha.");
             return NULL;
@@ -264,10 +264,11 @@ void mutka_close_server(struct mutka_server* server) {
     free(server);
 }
 
-
-
-
-void mutka_server_remove_client(struct mutka_server* server, struct mutka_client* client) {
+void mutka_server_remove_client
+(
+    struct mutka_server* server,
+    struct mutka_client* client
+){
     p_lock_server_mutex_ifneed(server);
 
     if(server->num_clients == 0) {
@@ -304,7 +305,12 @@ void mutka_server_remove_client(struct mutka_server* server, struct mutka_client
     p_unlock_server_mutex_ifneed(server);
 }
 
-static void p_mutka_server_make_client_uid(struct mutka_server* server, struct mutka_client* client) {
+static void p_mutka_server_make_client_uid
+(
+    struct mutka_server* server,
+    struct mutka_client* client
+){
+    client->uid = rand();
     bool client_has_unique_id = true;
     while(true) {
         for(uint32_t i = 0; i < server->num_clients; i++) {
@@ -323,33 +329,54 @@ static void p_mutka_server_make_client_uid(struct mutka_server* server, struct m
 }
 
 
-static void p_mutka_server_init_connected_client(struct mutka_server* server, struct mutka_client* client) {
+static void p_mutka_server_init_connected_client
+(
+    struct mutka_server* server,
+    struct mutka_client* client
+){
     client->env = MUTKA_ENV_SERVER;
-    client->uid = rand();
+    client->uid = 0;
     client->flags = 0;
+    client->captcha_retries_left = server->config.max_captcha_retries;        
 
     p_mutka_server_make_client_uid(server, client);
-
 }
 
-static void p_mutka_server_handle_client_connect(struct mutka_server* server, struct mutka_client* client) {
-   
-    p_mutka_server_init_connected_client(server, client);
+static void p_mutka_server_send_captcha_challenge
+(
+    struct mutka_server* server,
+    struct mutka_client* client
+){
+    memset(client->exp_captcha_answer, 0, sizeof(client->exp_captcha_answer));
 
-    // Lock mutex here or 'accept' in mutka_server_acceptor_thread_func
-    // will keep server->mutex locked.
-    pthread_mutex_lock(&server->mutex);
-    
-    
-    struct mutka_client* new_client_ptr = &server->clients[server->num_clients];
-    *new_client_ptr = *client;
-    server->num_clients++;
-  
-    server->config.client_connected_callback(server, new_client_ptr);
+    size_t captcha_buffer_len = 0;
+    char* captcha_buffer = get_random_captcha_buffer
+    (
+        &captcha_buffer_len,
+        client->exp_captcha_answer,
+        sizeof(client->exp_captcha_answer) - 1
+    );
 
 
-    mutka_rpacket_prep(&server->out_raw_packet, MPACKET_HOST_SIGNATURE);
-    
+    mutka_rpacket_prep(&server->out_raw_packet, MPACKET_CAPTCHA);
+    mutka_rpacket_add_ent(&server->out_raw_packet,
+            "captcha",
+            captcha_buffer,
+            captcha_buffer_len,
+            RPACKET_ENCODE_NONE);
+
+    printf("Expected captcha answer for %i: %s\n", client->uid, client->exp_captcha_answer);
+
+    mutka_send_clear_rpacket(client->socket_fd, &server->out_raw_packet);
+    free(captcha_buffer);
+}
+
+static void p_mutka_server_send_public_key
+(
+    struct mutka_server* server,
+    struct mutka_client* client
+){
+    mutka_rpacket_prep(&server->out_raw_packet, MPACKET_HOST_PUBLIC_KEY);
     mutka_rpacket_add_ent(&server->out_raw_packet,
             "host_publkey",
             server->host_mldsa87_publkey.bytes, sizeof(server->host_mldsa87_publkey.bytes),
@@ -358,21 +385,43 @@ static void p_mutka_server_handle_client_connect(struct mutka_server* server, st
     mutka_send_clear_rpacket(client->socket_fd, &server->out_raw_packet);
 }
 
+
+static void p_mutka_server_handle_client_connect
+(
+    struct mutka_server* server,
+    struct mutka_client* client
+){  
+    p_mutka_server_init_connected_client(server, client);
+    
+    struct mutka_client* new_client_ptr = &server->clients[server->num_clients];
+    memmove(new_client_ptr, client, sizeof(*client));
+    server->num_clients++;
+ 
+    server->config.client_connected_callback(server, new_client_ptr);
+
+
+    if((server->config.flags & MUTKA_SERVER_CAPTCHA_ENABLED)) {
+        p_mutka_server_send_captcha_challenge(server, new_client_ptr);
+    }
+    else {
+        p_mutka_server_send_public_key(server, new_client_ptr);
+    }
+}
+
 void* mutka_server_acceptor_thread_func(void* arg) {
     struct mutka_server* server = (struct mutka_server*)arg;
     while(1) {
-
         pthread_mutex_lock(&server->mutex);
+        
         if(server->num_clients+1 >= server->config.max_clients) {
             pthread_mutex_unlock(&server->mutex);
 
             // Server is full.
-            mutka_sleep_ms(500);
+            mutka_sleep_ms(1000);
             continue;
         }
 
         pthread_mutex_unlock(&server->mutex);
-
 
         struct mutka_client client;
         socklen_t socket_len = sizeof(client.socket_addr);
@@ -383,7 +432,12 @@ void* mutka_server_acceptor_thread_func(void* arg) {
             continue;
         }
 
+        // Lock server mutex here because accept()
+        // would otherwise cause it to be locked until a connection arrives
+        pthread_mutex_lock(&server->mutex);
+ 
         p_mutka_server_handle_client_connect(server, &client);
+        
         pthread_mutex_unlock(&server->mutex);
     }
     return NULL;
@@ -418,34 +472,6 @@ void* mutka_server_recvdata_thread_func(void* arg) {
 }
 
 
-static void p_mutka_server_send_captcha_challenge(struct mutka_server* server, struct mutka_client* client) {
-    printf("%s\n", __func__);
-
-    /*
-    memset(client->exp_captcha_answer, 0, sizeof(client->exp_captcha_answer));
-
-    size_t captcha_buffer_len = 0;
-    char* captcha_buffer = get_random_captcha_buffer
-    (
-        &captcha_buffer_len,
-        client->exp_captcha_answer,
-        sizeof(client->exp_captcha_answer) - 1
-    );
-
-    mutka_rpacket_prep(&server->out_raw_packet, MPACKET_CAPTCHA);
-    mutka_rpacket_add_ent(&server->out_raw_packet,
-            "captcha",
-            captcha_buffer,
-            captcha_buffer_len,
-            RPACKET_ENCODE_NONE);
-
-    mutka_send_encrypted_rpacket(client->socket_fd,
-            &server->out_raw_packet,
-            &client->metadata_shared_key);
-
-    free(captcha_buffer);
-    */
-}
                 
 static void p_mutka_server_send_client_cipher_publkeys
 (
@@ -462,6 +488,30 @@ static void p_mutka_server_send_client_cipher_publkeys
     // The client's keys are already generated from 
     // mutka_server_handle_packet() 'MPACKET_EXCHANGE_METADATA_KEYS'
 
+    // Combine server side client's keys hash
+    // and create signature from that.
+    uint8_t combined_publkey_hash[SHA512_DIGEST_LENGTH * 2] = { 0 };
+
+    SHA512(client->mtdata_keys.x25519_publkey.bytes,
+            sizeof(client->mtdata_keys.x25519_publkey.bytes),
+            combined_publkey_hash);
+
+    SHA512(mlkem_wrappedkey,
+            mlkem_wrappedkey_len,
+            combined_publkey_hash + SHA512_DIGEST_LENGTH);
+
+    signature_mldsa87_t signature;
+
+    if(!mutka_openssl_MLDSA87_sign(
+                MUTKA_VERSION_STR"(METADATAKEYS_SIGN_FROM_SERVER)",
+                &signature,
+                &server->host_mldsa87_privkey,
+                combined_publkey_hash,
+                sizeof(combined_publkey_hash))) {
+        mutka_set_errmsg("%s: Failed to sign server side client's metadata keys.");
+        return;
+    }
+
     mutka_rpacket_prep(&server->out_raw_packet, MPACKET_EXCHANGE_METADATA_KEYS);
     mutka_rpacket_add_ent(&server->out_raw_packet,
             "x25519_public",
@@ -476,6 +526,12 @@ static void p_mutka_server_send_client_cipher_publkeys
             RPACKET_ENCODE);
 
     mutka_rpacket_add_ent(&server->out_raw_packet,
+            "signature",
+            signature.bytes,
+            sizeof(signature.bytes),
+            RPACKET_ENCODE);
+
+    mutka_rpacket_add_ent(&server->out_raw_packet,
             "hkdf_salt_x25519",
             hkdf_salt_x25519,
             hkdf_salt_x25519_len,
@@ -487,38 +543,89 @@ static void p_mutka_server_send_client_cipher_publkeys
             hkdf_salt_mlkem_len,
             RPACKET_ENCODE);
 
+    client->flags |= MUTKA_SCFLG_MTDATAKEYS_EXCHANGED;
     mutka_send_clear_rpacket(client->socket_fd, &server->out_raw_packet);
 }
 
-void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client* client) {
+static bool p_client_has_confirmed_captcha
+(
+    struct mutka_server* server,
+    struct mutka_client* client
+){
+    if(!(server->config.flags & MUTKA_SERVER_CAPTCHA_ENABLED)) {
+        return true;
+    }
+
+    printf("CAPTCHA Confirmed: %s\n", 
+            (client->flags & MUTKA_SCFLG_CAPTCHA_COMPLETE) ? "Yes" : "No");
+    return (client->flags & MUTKA_SCFLG_CAPTCHA_COMPLETE);
+}
+
+void mutka_server_handle_packet
+(
+    struct mutka_server* server,
+    struct mutka_client* client
+){
     // NOTE: server->mutex is locked here.
 
     printf("Handling packet, num_elements = %li\n", server->inpacket.num_elements);
 
     switch(server->inpacket.id) {
 
-        /*
-        case MPACKET_HOST_SIGNATURE_FAILED:
-            mutka_set_errmsg("CLIENT %i COULD NOT VERIFY HOST SIGNATURE!", client->uid);
-            return;
+        case MPACKET_CAPTCHA:
+            if(server->inpacket.num_elements != 1) {
+                return;
+            }
+            if(p_client_has_confirmed_captcha(server, client)) {
+                return;
+            }
+            {    
+                struct mutka_str* answer = &server->inpacket.elements[0].data;
 
-        case MPACKET_HOST_SIGNATURE_OK:
-            printf("\033[32mClient %i verified host signature\033[0m\n", client->uid);
-            
-            client->flags |= MUTKA_SCFLG_MDKEYS_EXCHANGED;
-            if((server->config.flags & MUTKA_SERVER_ENABLE_CAPTCHA)
-            && !(client->flags & MUTKA_SCFLG_VERIFIED)) {
-                p_mutka_server_send_captcha_challenge(server, client);
+                if(mutka_str_lastbyte(answer) == '\n') {
+                    // May be because client used 'read()' and forgot to remove the newline.
+                    // It can be ignored.
+                    mutka_str_pop_end(answer);
+                }
+                printf("Answer: '%s' %i\n", answer->bytes, answer->size);
+                printf("Expected: '%s' %li\n", client->exp_captcha_answer, strlen(client->exp_captcha_answer));
+
+                if(!mutka_strcmp(
+                            client->exp_captcha_answer,
+                            strlen(client->exp_captcha_answer),
+                            answer->bytes,
+                            answer->size)) {
+                    client->captcha_retries_left--;
+                    printf("%i captcha retries left: %i\n", client->uid, client->captcha_retries_left);
+                    if(client->captcha_retries_left <= 0) {
+                        mutka_server_remove_client(server, client);
+                        return;
+                    }
+                    p_mutka_server_send_captcha_challenge(server, client);
+                }
+                else {
+                    client->flags |= MUTKA_SCFLG_CAPTCHA_COMPLETE;
+                    p_mutka_server_send_public_key(server, client);
+                }
             }
             return;
-        */
-    
+
         case MPACKET_METADATA_KEY_EXHCANGE_COMPLETE:
+            if(!p_client_has_confirmed_captcha(server, client)) {
+                return;
+            }
+            if(!(client->flags & MUTKA_SCFLG_MTDATAKEYS_EXCHANGED)) {
+                return;
+            }
+            
             printf("\033[32mMetadata key exchange with %i is complete.\033[0m\n", client->uid);
-            break;
+            return;
 
         case MPACKET_EXCHANGE_METADATA_KEYS:
             if(server->inpacket.num_elements != 2) {
+                return;
+            }
+            if(!p_client_has_confirmed_captcha(server, client)) {
                 return;
             }
             {
@@ -570,7 +677,7 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
                 uint8_t mlkem_wrappedkey[1024*2] = { 0 };
                 size_t mlkem_wrappedkey_len = 0;
 
-                // Get ML-KEM-1024 shared secret and wrapped key.
+                // Get mlkem shared secret and wrapped key.
                 if(!mutka_openssl_encaps(
                             mlkem_wrappedkey, 
                             sizeof(mlkem_wrappedkey),
@@ -581,7 +688,8 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
                     return;
                 }
 
-                // Pass mlkem shared secret through HKDF.
+                // Pass mlkem shared secret through HKDF
+                // to get mlkem shared key.
                 if(!mutka_openssl_HKDF(
                             client->mtdata_keys.mlkem_shared_key.bytes,
                             sizeof(client->mtdata_keys.mlkem_shared_key.bytes),
@@ -604,7 +712,6 @@ void mutka_server_handle_packet(struct mutka_server* server, struct mutka_client
                         sizeof(hkdf_salt_x25519),
                         hkdf_salt_mlkem,
                         sizeof(hkdf_salt_mlkem));
-
             }
             return;
     }

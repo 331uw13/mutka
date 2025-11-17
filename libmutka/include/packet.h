@@ -49,17 +49,16 @@ enum mutka_packet_ids : int {
 
 
     // When the client connects to server
-    // the server will send its longterm ML-DSA-87 signature
-    // and the public key which was used to generate the signature.
+    // the server will send its longterm ML-DSA-87 public key
     //
-    // If the client has the host signature saved on disk 
+    // If the client has the host's public key saved on disk 
     // it will try and match it to existing one, 
     // but if it doesnt match a serious warning should be shown
     // (see "client.h" 'accept_host_public_key_change_callback()').
     //
-    // If the host signature doesnt exist on client's "trusted_hosts" file
+    // If the host's public key doesnt exist on client's "trusted_hosts" file
     // 'accept_new_trusted_host_callback()' is called.
-    MPACKET_HOST_SIGNATURE,
+    MPACKET_HOST_PUBLIC_KEY,
 
     // Client and server will exchange metadata keys
     // for encrypting and decrypting packet metadata.
