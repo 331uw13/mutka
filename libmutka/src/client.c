@@ -636,8 +636,6 @@ struct mutka_client* mutka_connect
     client->env = MUTKA_ENV_CLIENT;
 
     // Initialize client structure.
-    //client->inpacket.elements = NULL;
-    //client->inpacket.num_elements = 0;
     mutka_inpacket_init(&client->inpacket);
     mutka_alloc_rpacket(&client->out_raw_packet, MUTKA_RAW_PACKET_DEFMEMSIZE);
     mutka_alloc_rpacket(&client->inpacket.raw_packet, MUTKA_RAW_PACKET_DEFMEMSIZE);
@@ -737,14 +735,12 @@ void* mutka_client_recv_thread(void* arg) {
 
             case M_ENCRYPTED_RPACKET:
                 printf("M_ENCRYPTED_RPACKET\n");
-                /*
                 if(mutka_parse_encrypted_rpacket(
                         &client->inpacket,
                         &client->inpacket.raw_packet,
-                        &client->metadata_shared_key)) {
+                        &client->mtdata_keys.hshared_key)) {
                     mutka_client_handle_packet(client);
                 }
-                */
                 break;
         }
 
@@ -818,11 +814,14 @@ static bool p_mutka_client_process_host_signature(struct mutka_client* client) {
         goto out;
     }
 
+    // Maybe the "trusted_hosts" file is never used before.
     if(mutka_file_size(client->config.trusted_hosts_path) == 0) {
-        result = p_mutka_client_save_trusted_host(
+        if(p_mutka_client_save_trusted_host(
                 client,
                 host_tag, host_tag_len,
-                &host_publkey);
+                &host_publkey)) {
+            goto new_host_saved;
+        }
         goto out;
     }
 
@@ -840,10 +839,13 @@ static bool p_mutka_client_process_host_signature(struct mutka_client* client) {
     const ssize_t host_index = mutka_charptr_find(hosts_file, hosts_file_size, host_tag, host_tag_len);
     if(host_index < 0) {
         // Host tag was not found.
-        result = p_mutka_client_save_trusted_host(
+        if(p_mutka_client_save_trusted_host(
                 client,
                 host_tag, host_tag_len,
-                &host_publkey);
+                &host_publkey)) {
+            goto new_host_saved;
+        }
+        
         goto unmap_and_out;       
     }
     
@@ -884,14 +886,17 @@ static bool p_mutka_client_process_host_signature(struct mutka_client* client) {
                 host_publkey.bytes,
                 sizeof(host_publkey.bytes));
 
-        // Synchronize memory to avoid undefined reads in the future.
+        // Synchronize memory with file to avoid undefined reads in the future.
         msync(hosts_file, hosts_file_size, MS_SYNC);
     }
     
 
+new_host_saved:
+
     memmove(client->host_mldsa87_publkey.bytes,
             host_publkey.bytes,
             sizeof(host_publkey.bytes));
+
 
     result = true;
 
@@ -935,6 +940,10 @@ void mutka_client_handle_packet(struct mutka_client* client) {
     // Check for internal packets first.
     switch(client->inpacket.id) {
 
+        case MPACKET_TEST:
+            printf("%s\n", client->inpacket.elements[0].data.bytes);
+            return;
+
         case MPACKET_CAPTCHA:
             struct mutka_str* captcha_ascii = &client->inpacket.elements[0].data;
             mutka_str_nullterm(captcha_ascii);
@@ -957,7 +966,7 @@ void mutka_client_handle_packet(struct mutka_client* client) {
             return;
         
         case MPACKET_EXCHANGE_METADATA_KEYS:
-            if(client->inpacket.num_elements != 5) {
+            if(client->inpacket.num_elements != 4) {
                 mutka_set_errmsg("Failed to receive complete metadata key exchange packet.");
                 return;
             }
@@ -965,15 +974,12 @@ void mutka_client_handle_packet(struct mutka_client* client) {
                 struct mutka_packet_elem* peer_x25519_elem       = &client->inpacket.elements[0];
                 struct mutka_packet_elem* mlkem_wrapped_elem     = &client->inpacket.elements[1];
                 struct mutka_packet_elem* signature_elem         = &client->inpacket.elements[2];
-                struct mutka_packet_elem* hkdf_salt_x25519_elem  = &client->inpacket.elements[3];
-                struct mutka_packet_elem* hkdf_salt_mlkem_elem   = &client->inpacket.elements[4];
+                struct mutka_packet_elem* hkdf_salt_elem         = &client->inpacket.elements[3];
 
-                uint8_t  hkdf_salt_x25519 [HKDF_SALT_LEN] = { 0 };
-                uint8_t  hkdf_salt_mlkem  [HKDF_SALT_LEN] = { 0 };
+                uint8_t  hkdf_salt [HKDF_SALT_LEN] = { 0 };
 
                 signature_mldsa87_t signature;
                 key128bit_t         peer_x25519_publkey;
-                key128bit_t         mlkem_shared_secret;
                 uint8_t             mlkem_wrapped [mutka_get_decoded_buffer_len(mlkem_wrapped_elem->data.size)];
 
                 if(!mutka_decode(peer_x25519_publkey.bytes, sizeof(peer_x25519_publkey.bytes),
@@ -1002,23 +1008,16 @@ void mutka_client_handle_packet(struct mutka_client* client) {
                     client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
                     return;
                 }
-                if(!mutka_decode(hkdf_salt_x25519, sizeof(hkdf_salt_x25519),
-                            hkdf_salt_x25519_elem->data.bytes,
-                            hkdf_salt_x25519_elem->data.size)) {
+                if(!mutka_decode(hkdf_salt, sizeof(hkdf_salt),
+                            hkdf_salt_elem->data.bytes,
+                            hkdf_salt_elem->data.size)) {
                     mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
-                            "Failed to decode HKDF salt for X25519 key derivation.");
+                            "Failed to decode HKDF salt.");
                     client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
                     return;
                 }
 
-                if(!mutka_decode(hkdf_salt_mlkem, sizeof(hkdf_salt_mlkem),
-                            hkdf_salt_mlkem_elem->data.bytes,
-                            hkdf_salt_mlkem_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
-                            "Failed to decode HKDF salt for ML-KEM-1024 key derivation.");
-                    client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
-                    return;
-                }
+                //MUTKA_HEX_DUMP(client->host_mldsa87_publkey, "HOST PUBLKEY");
 
                 // Server combines X25519 public key hash + wrapped ML-KEM-1024 key hash.
                 // and it is used as data for signature.
@@ -1043,17 +1042,19 @@ void mutka_client_handle_packet(struct mutka_client* client) {
                     return;
                 }
 
-                if(!mutka_openssl_derive_shared_key(
-                            &client->mtdata_keys.x25519_shared_key,
+                key128bit_t x25519_shared_secret;
+                key128bit_t mlkem_shared_secret;
+
+
+                if(!mutka_openssl_derive_shared_secret(
+                            &x25519_shared_secret,
                             &client->mtdata_keys.x25519_privkey,
-                            &peer_x25519_publkey,
-                            hkdf_salt_x25519,
-                            sizeof(hkdf_salt_x25519),
-                            MUTKA_VERSION_STR"(METADATAKEYS_X25519_HKDF)")) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to derive shared X25519 key.");
+                            &peer_x25519_publkey)) {
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to derive shared X25519 secret.");
                     client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
                     return;
                 }
+                
 
                 // Get mlkem shared secret.
                 if(!mutka_openssl_decaps(
@@ -1066,22 +1067,30 @@ void mutka_client_handle_packet(struct mutka_client* client) {
                     return;
                 }
 
-                // Pass mlkem shared secret through HKDF
-                // to get mlkem shared key.
+              
+                // Get hybrid shared key.
+
+                uint8_t hybrid_secret[sizeof(x25519_shared_secret.bytes) + sizeof(mlkem_shared_secret.bytes)] = { 0 };
+                memmove(hybrid_secret,
+                        x25519_shared_secret.bytes,
+                        sizeof(x25519_shared_secret.bytes));
+
+                memmove(hybrid_secret + sizeof(x25519_shared_secret.bytes),
+                        mlkem_shared_secret.bytes,
+                        sizeof(mlkem_shared_secret.bytes));
+
                 if(!mutka_openssl_HKDF(
-                            client->mtdata_keys.mlkem_shared_key.bytes,
-                            sizeof(client->mtdata_keys.mlkem_shared_key.bytes),
-                            mlkem_shared_secret.bytes,
-                            sizeof(mlkem_shared_secret.bytes),
-                            hkdf_salt_mlkem,
-                            sizeof(hkdf_salt_mlkem),
-                            MUTKA_VERSION_STR"(METADATAKEYS_MLKEM_HKDF)",
-                            sizeof(client->mtdata_keys.mlkem_shared_key.bytes))) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to derive shared ML-KEM-1024 key.");
+                            &client->mtdata_keys.hshared_key,
+                            hybrid_secret,
+                            sizeof(hybrid_secret),
+                            hkdf_salt,
+                            MUTKA_VERSION_STR"(METADATAKEYS_HYBRIDKEY_HKDF)")) {
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to derive shared hybrid key.");
                     client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
                     return;
                 }
-                
+
+
                 printf("\033[32mMetadata key exchange with host is complete.\033[0m\n");
 
                 // Inform the server everything is ok and we can continue.

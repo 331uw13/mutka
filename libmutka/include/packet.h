@@ -85,6 +85,7 @@ enum mutka_packet_ids : int {
     MPACKET_CAPTCHA,
 
 
+    MPACKET_TEST,
 
     MUTKA_NUM_PACKETS
 };
@@ -114,7 +115,7 @@ void mutka_send_encrypted_rpacket
 (
     int socket_fd,
     struct mutka_raw_packet* packet,
-    key128bit_t* metadata_shared_key
+    key128bit_t* mtdata_hshared_key
 );
 
 // IMPORTANT NOTE: 

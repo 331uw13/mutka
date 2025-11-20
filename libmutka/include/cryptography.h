@@ -22,11 +22,13 @@ signature_mldsa87_t;
 struct mutka_cipher_keys {
     key128bit_t          x25519_privkey;
     key128bit_t          x25519_publkey;
-    key128bit_t          x25519_shared_key;
     
     key_mlkem1024_priv_t mlkem_privkey;
     key_mlkem1024_publ_t mlkem_publkey;
-    key128bit_t          mlkem_shared_key;
+
+    // Hybrid shared key. HKDF(x25519_shared_key + mlkem_shared_key)
+    // Use this key for encrypting/decrypting
+    key128bit_t hshared_key; 
 };
 
 bool mutka_generate_cipher_keys(struct mutka_cipher_keys* keys);
@@ -60,27 +62,25 @@ bool mutka_openssl_scrypt
     size_t   salt_size
 );
 
+
+// IMPORTANT NOTE:
+// hkdf_salt expected size is HKDF_SALT_LEN
+
 bool mutka_openssl_HKDF
 (
-    uint8_t*     output,
-    size_t       output_memsize,
+    key128bit_t* output,
     uint8_t*     shared_secret,
     size_t       shared_secret_len,
     uint8_t*     hkdf_salt,
-    size_t       hkdf_salt_len,
-    const char*  hkdf_info,
-    size_t       output_length
+    const char*  hkdf_info
 );
 
-// The shared secret goes through HKDF before it is written to 'output'
-bool mutka_openssl_derive_shared_key
+
+bool mutka_openssl_derive_shared_secret
 (
     key128bit_t* output,
     key128bit_t* self_privkey,
-    key128bit_t* peer_publkey,
-    uint8_t*     hkdf_salt, 
-    size_t       hkdf_salt_len,
-    const char*  hkdf_info
+    key128bit_t* peer_publkey
 );
 
 bool mutka_openssl_encaps

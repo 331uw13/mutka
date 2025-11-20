@@ -26,8 +26,7 @@ bool mutka_generate_cipher_keys(struct mutka_cipher_keys* keys) {
         return false;
     }
 
-    memset(keys->x25519_shared_key.bytes, 0, sizeof(keys->x25519_shared_key.bytes));
-    memset(keys->mlkem_shared_key.bytes, 0, sizeof(keys->mlkem_shared_key.bytes));
+    memset(keys->hshared_key.bytes, 0, sizeof(keys->hshared_key.bytes));
 
     return true;
 }
@@ -192,14 +191,11 @@ bool mutka_openssl_scrypt(
 
 bool mutka_openssl_HKDF
 (
-    uint8_t*     output,
-    size_t       output_memsize,
+    key128bit_t* output,
     uint8_t*     shared_secret,
     size_t       shared_secret_len,
     uint8_t*     hkdf_salt,
-    size_t       hkdf_salt_len,
-    const char*  hkdf_info,
-    size_t       output_length
+    const char*  hkdf_info
 ){
     bool result = false;
     EVP_KDF* kdf = NULL;
@@ -221,16 +217,17 @@ bool mutka_openssl_HKDF
         OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, SN_sha256, strlen(SN_sha256)),
         OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_KEY, shared_secret, shared_secret_len),
         OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_INFO, (void*)hkdf_info, strlen(hkdf_info)),
-        OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, (void*)hkdf_salt, hkdf_salt_len),
+        OSSL_PARAM_construct_octet_string(OSSL_KDF_PARAM_SALT, (void*)hkdf_salt, HKDF_SALT_LEN),
         OSSL_PARAM_construct_end()
     };
 
-    if(output_length != output_memsize) {
+    /*if(output_length != output_memsize) {
         mutka_set_errmsg("%s: Failed to get correct output length from HKDF.", __func__);
         goto out;
     }
+    */
     
-    if(!EVP_KDF_derive(ctx, (uint8_t*)output, output_length, params)) {
+    if(!EVP_KDF_derive(ctx, output->bytes, sizeof(output->bytes), params)) {
         openssl_error();
         goto out;
     }
@@ -248,19 +245,16 @@ out:
     return result;
 }
 
-bool mutka_openssl_derive_shared_key
+bool mutka_openssl_derive_shared_secret
 (
     key128bit_t* output,
     key128bit_t* self_privkey,
-    key128bit_t* peer_publkey,
-    uint8_t*  hkdf_salt, 
-    size_t    hkdf_salt_len,
-    const char* hkdf_info
+    key128bit_t* peer_publkey
 ){
     bool result = false;
 
     size_t shared_secret_len = 0;
-    uint8_t* shared_secret = NULL;
+    //uint8_t* shared_secret = NULL;
 
     EVP_PKEY* peer_pkey = EVP_PKEY_new_raw_public_key
         (EVP_PKEY_X25519, NULL, peer_publkey->bytes, sizeof(peer_publkey->bytes));
@@ -303,24 +297,23 @@ bool mutka_openssl_derive_shared_key
         goto out;
     }
 
-    shared_secret = malloc(shared_secret_len);
-    if(!EVP_PKEY_derive(ctx, shared_secret, &shared_secret_len)) {
+    //shared_secret = malloc(shared_secret_len);
+    if(!EVP_PKEY_derive(ctx, output->bytes, &shared_secret_len)) {
         openssl_error();
         goto out;
     }
 
+    /*
     // Pass the shared secret through HKDF to make the key stronger.
     if(!mutka_openssl_HKDF(
-                output->bytes,
-                sizeof(output->bytes),
+                output,
                 shared_secret,
                 shared_secret_len,
                 hkdf_salt,
-                hkdf_salt_len,
-                hkdf_info,
-                X25519_KEYLEN)) {
+                hkdf_info)) {
         goto out;
     }
+    */
 
 
     result = true;
@@ -336,10 +329,12 @@ out:
     if(self_pkey) {
         EVP_PKEY_free(self_pkey);
     }
+    /*
     if(shared_secret) {
         memset(shared_secret, 0, shared_secret_len);
         free(shared_secret);
     }
+    */
 
     return result;
 }
@@ -572,18 +567,6 @@ bool mutka_openssl_AES256GCM_encrypt
         openssl_error();
         goto out;
     }
-
-    /*
-    //mutka_str_reserve(tag_out, AESGCM_TAG_LEN);
-
-    params[0] = OSSL_PARAM_construct_octet_string(OSSL_CIPHER_PARAM_AEAD_TAG, tag_out->bytes, AESGCM_TAG_LEN);
-    if(!EVP_CIPHER_CTX_get_params(ctx, params)) {
-        openssl_error();
-        goto out;
-    }
-
-    //tag_out->size = AESGCM_TAG_LEN;
-    */
 
     result = true;
 
@@ -837,26 +820,6 @@ bool mutka_openssl_MLDSA87_sign
         openssl_error();
         goto out;
     }
-
-    /*
-    size_t public_keylen = 0;
-
-    // Get public key length.
-    if(EVP_PKEY_get_raw_public_key(pkey, NULL, &public_keylen) <= 0) {
-        openssl_error();
-        goto out;
-    }
-
-    if(public_keylen != sizeof(verifykey_out->bytes)) {
-        mutka_set_errmsg("%s: Unexpected public key length.", __func__);
-        goto out;
-    }
-    // Save public key for verifier.
-    if(EVP_PKEY_get_raw_public_key(pkey, verifykey_out->bytes, &public_keylen) <= 0) {
-        openssl_error();
-        goto out;
-    }
-    */
 
     result = true;
 out:

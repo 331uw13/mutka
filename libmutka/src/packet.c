@@ -303,7 +303,7 @@ void mutka_send_encrypted_rpacket
 (
     int socket_fd,
     struct mutka_raw_packet* packet,
-    key128bit_t* metadata_shared_key
+    key128bit_t* mtdata_hshared_key
 ){
     if(packet->has_write_error) {
         return;
@@ -329,7 +329,7 @@ void mutka_send_encrypted_rpacket
     if(!mutka_openssl_AES256GCM_encrypt(
                 &cipher,
                 gcm_tag,
-                metadata_shared_key->bytes,
+                mtdata_hshared_key->bytes,
                 gcm_iv,
                 MUTKA_VERSION_STR,
                 MUTKA_VERSION_STR_LEN,
@@ -377,7 +377,7 @@ bool mutka_parse_encrypted_rpacket
 (
     struct mutka_packet* packet,
     struct mutka_raw_packet* raw_packet,
-    key128bit_t* metadata_shared_key
+    key128bit_t* mtdata_hshared_key
 ){
     bool result = false;
 
@@ -450,7 +450,7 @@ bool mutka_parse_encrypted_rpacket
 
     if(!mutka_openssl_AES256GCM_decrypt(
                 &plain_packet,
-                metadata_shared_key->bytes,
+                mtdata_hshared_key->bytes,
                 gcm_iv,
                 MUTKA_VERSION_STR,
                 MUTKA_VERSION_STR_LEN,

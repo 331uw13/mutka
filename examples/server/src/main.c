@@ -15,22 +15,18 @@ void mutka_error(char* buffer, size_t size) {
 
 
 void client_connected(struct mutka_server* server, struct mutka_client* client) {
-
     printf("client connected. (uid = %i) (socket_fd = %i)\n", client->uid, client->socket_fd);
-
 }
 
 void client_disconnected(struct mutka_server* server, struct mutka_client* client) {
-    
     printf("client disconnected. (uid = %i) (socket_fd = %i)\n", client->uid, client->socket_fd);
 }
 
 
 void packet_received(struct mutka_server* server, struct mutka_client* client) {
-    
     printf("packet received. (id = %i)\n", server->inpacket.id);
-
 }
+
 
 bool accept_new_hostkeys() {
     printf("\033[33mGenerate new server keys? (yes/no): \033[0m");
@@ -49,7 +45,7 @@ int main() {
         .port = 35580,
         .max_clients = 8,
         .max_captcha_retries = 3,
-        .flags = (MUTKA_SERVER_REUSEADDR | MUTKA_SERVER_CAPTCHA_ENABLED),
+        .flags = (MUTKA_SERVER_REUSEADDR/* | MUTKA_SERVER_CAPTCHA_ENABLED*/),
         
         .accept_new_hostkeys_callback   = accept_new_hostkeys,
         .client_connected_callback      = client_connected,
@@ -63,7 +59,6 @@ int main() {
     printf("sizeof(struct mutka_client) = %li\n", sizeof(struct mutka_client));
 
 
-    // host's ED25519 are generated if they dont exist.
     struct mutka_server* server = mutka_create_server(config, "./host_keys");
 
     if(!server) {

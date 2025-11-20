@@ -479,10 +479,8 @@ static void p_mutka_server_send_client_cipher_publkeys
     struct mutka_client* client,
     uint8_t* mlkem_wrappedkey,
     size_t   mlkem_wrappedkey_len,
-    uint8_t* hkdf_salt_x25519,
-    size_t   hkdf_salt_x25519_len,
-    uint8_t* hkdf_salt_mlkem,
-    size_t   hkdf_salt_mlkem_len
+    uint8_t* hkdf_salt,
+    size_t   hkdf_salt_len
 ){
 
     // The client's keys are already generated from 
@@ -532,15 +530,9 @@ static void p_mutka_server_send_client_cipher_publkeys
             RPACKET_ENCODE);
 
     mutka_rpacket_add_ent(&server->out_raw_packet,
-            "hkdf_salt_x25519",
-            hkdf_salt_x25519,
-            hkdf_salt_x25519_len,
-            RPACKET_ENCODE);
-
-    mutka_rpacket_add_ent(&server->out_raw_packet,
-            "hkdf_salt_mlkem",
-            hkdf_salt_mlkem,
-            hkdf_salt_mlkem_len,
+            "hkdf_salt",
+            hkdf_salt,
+            hkdf_salt_len,
             RPACKET_ENCODE);
 
     client->flags |= MUTKA_SCFLG_MTDATAKEYS_EXCHANGED;
@@ -560,6 +552,27 @@ static bool p_client_has_confirmed_captcha
             (client->flags & MUTKA_SCFLG_CAPTCHA_COMPLETE) ? "Yes" : "No");
     return (client->flags & MUTKA_SCFLG_CAPTCHA_COMPLETE);
 }
+
+            
+
+static void send_test_packet(struct mutka_server* server, struct mutka_client* client) {
+
+    char* buffer = "Something idk doesnt matter here.";
+
+    mutka_rpacket_prep(&server->out_raw_packet, MPACKET_TEST);
+    mutka_rpacket_add_ent(&server->out_raw_packet,
+            "testing",
+            buffer,
+            strlen(buffer),
+            RPACKET_ENCODE_NONE);
+
+    mutka_send_encrypted_rpacket(
+            client->socket_fd,
+            &server->out_raw_packet,
+            &client->mtdata_keys.hshared_key);
+}
+
+
 
 void mutka_server_handle_packet
 (
@@ -617,7 +630,10 @@ void mutka_server_handle_packet
             if(!(client->flags & MUTKA_SCFLG_MTDATAKEYS_EXCHANGED)) {
                 return;
             }
-            
+           
+
+            send_test_packet(server, client);
+
             printf("\033[32mMetadata key exchange with %i is complete.\033[0m\n", client->uid);
             return;
 
@@ -630,7 +646,8 @@ void mutka_server_handle_packet
             }
             {
                 if(!mutka_generate_cipher_keys(&client->mtdata_keys)) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to generate cipher keys for client.");
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
+                            "Failed to generate cipher keys for client.");
                     return;
                 }
 
@@ -643,37 +660,36 @@ void mutka_server_handle_packet
                 if(!mutka_decode(peer_x25519_publkey.bytes, sizeof(peer_x25519_publkey.bytes),
                             peer_x25519_elem->data.bytes,
                             peer_x25519_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to decode peer X25519 public key.");
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
+                            "Failed to decode peer X25519 public key.");
                     return;
                 }
 
                 if(!mutka_decode(peer_mlkem_publkey.bytes, sizeof(peer_mlkem_publkey.bytes),
                             peer_mlkem_elem->data.bytes,
                             peer_mlkem_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to decode peer ML-KEM-1024 public key.");
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
+                            "Failed to decode peer ML-KEM-1024 public key.");
                     return;
                 }
 
-                uint8_t hkdf_salt_x25519[HKDF_SALT_LEN] = { 0 };
-                RAND_bytes(hkdf_salt_x25519, sizeof(hkdf_salt_x25519));
-
-                uint8_t hkdf_salt_mlkem[HKDF_SALT_LEN] = { 0 };
-                RAND_bytes(hkdf_salt_mlkem, sizeof(hkdf_salt_mlkem));
-
-                // Get X25519 shared key.
-                if(!mutka_openssl_derive_shared_key(
-                            &client->mtdata_keys.x25519_shared_key,
-                            &client->mtdata_keys.x25519_privkey,
-                            &peer_x25519_publkey,
-                            hkdf_salt_x25519,
-                            sizeof(hkdf_salt_x25519),
-                            MUTKA_VERSION_STR"(METADATAKEYS_X25519_HKDF)")) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to derive shared X25519 key.");
-                    return;
-                }
-
+                uint8_t hkdf_salt[HKDF_SALT_LEN] = { 0 };
+                RAND_bytes(hkdf_salt, sizeof(hkdf_salt));
 
                 key128bit_t mlkem_shared_secret;
+                key128bit_t x25519_shared_secret;
+
+
+                if(!mutka_openssl_derive_shared_secret(
+                            &x25519_shared_secret,
+                            &client->mtdata_keys.x25519_privkey,
+                            &peer_x25519_publkey)) {
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
+                            "Failed to derive shared X25519 secret.");
+                    return;
+                }
+
+
                 uint8_t mlkem_wrappedkey[1024*2] = { 0 };
                 size_t mlkem_wrappedkey_len = 0;
 
@@ -684,34 +700,44 @@ void mutka_server_handle_packet
                             &mlkem_wrappedkey_len,
                             &mlkem_shared_secret,
                             &peer_mlkem_publkey)) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to encapsulate key.");
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
+                            "Failed to encapsulate key.");
                     return;
                 }
 
-                // Pass mlkem shared secret through HKDF
-                // to get mlkem shared key.
+
+                uint8_t hybrid_secret[
+                    sizeof(x25519_shared_secret.bytes) + 
+                    sizeof(mlkem_shared_secret.bytes)
+                ] = { 0 };
+                memmove(hybrid_secret,
+                        x25519_shared_secret.bytes,
+                        sizeof(x25519_shared_secret.bytes));
+
+                memmove(hybrid_secret + sizeof(x25519_shared_secret.bytes),
+                        mlkem_shared_secret.bytes,
+                        sizeof(mlkem_shared_secret.bytes));
+
+
                 if(!mutka_openssl_HKDF(
-                            client->mtdata_keys.mlkem_shared_key.bytes,
-                            sizeof(client->mtdata_keys.mlkem_shared_key.bytes),
-                            mlkem_shared_secret.bytes,
-                            sizeof(mlkem_shared_secret.bytes),
-                            hkdf_salt_mlkem,
-                            sizeof(hkdf_salt_mlkem),
-                            MUTKA_VERSION_STR"(METADATAKEYS_MLKEM_HKDF)",
-                            sizeof(client->mtdata_keys.mlkem_shared_key.bytes))) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: Failed to derive shared ML-KEM-1024 key.");
+                            &client->mtdata_keys.hshared_key,
+                            hybrid_secret,
+                            sizeof(hybrid_secret),
+                            hkdf_salt,
+                            MUTKA_VERSION_STR"(METADATAKEYS_HYBRIDKEY_HKDF)")) {
+                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
+                            "Failed to derive shared hybrid key.");
                     return;
                 }
+                
 
                 p_mutka_server_send_client_cipher_publkeys(
                         server,
                         client,
                         mlkem_wrappedkey,
                         mlkem_wrappedkey_len,
-                        hkdf_salt_x25519,
-                        sizeof(hkdf_salt_x25519),
-                        hkdf_salt_mlkem,
-                        sizeof(hkdf_salt_mlkem));
+                        hkdf_salt,
+                        sizeof(hkdf_salt));
             }
             return;
     }
