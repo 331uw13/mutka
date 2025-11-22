@@ -148,10 +148,12 @@ struct mutka_server* mutka_create_server
     }
 
     struct mutka_server* server = malloc(sizeof *server);
-
+    server->tmp_peer_info = NULL;
+    server->tmp_peer_info = calloc(1, MUTKA_TMPPEERINFO_MAX);
+    server->tmp_peer_info_len = 0;
     memset(server->host_mldsa87_privkey.bytes, 0, sizeof(server->host_mldsa87_privkey.bytes));
     memset(server->host_mldsa87_publkey.bytes, 0, sizeof(server->host_mldsa87_publkey.bytes));
-    
+    server->flags = 0; 
 
     if(!p_mutka_server_read_hostkeys(server, hostkeys_path)) {
         // Host signature doesnt exist or it was not valid.
@@ -228,6 +230,8 @@ struct mutka_server* mutka_create_server
 
     server->clients = malloc(config.max_clients * sizeof *server->clients);
     server->num_clients = 0;
+    server->client_disconnect_queue = malloc(config.max_clients * sizeof *server->clients);
+    server->num_clients_disconnecting = 0;
 
     pthread_mutex_init(&server->mutex, NULL);
 
@@ -256,24 +260,34 @@ void mutka_close_server(struct mutka_server* server) {
         mutka_disconnect(&server->clients[i]);
     }
 
+    if(server->tmp_peer_info) {
+        free(server->tmp_peer_info);
+        server->tmp_peer_info = NULL;
+    }
+
     mutka_free_rpacket(&server->out_raw_packet);
     mutka_free_rpacket(&server->inpacket.raw_packet);
     mutka_free_packet(&server->inpacket);
 
     close(server->socket_fd);
+    server->socket_fd = 0;
+    
+    free(server->clients);
+    free(server->client_disconnect_queue);
+    server->clients = NULL;
+    server->client_disconnect_queue = NULL;
+
     free(server);
 }
 
 void mutka_server_remove_client
 (
     struct mutka_server* server,
-    struct mutka_client* client
+    int client_uid
 ){
     p_lock_server_mutex_ifneed(server);
 
     if(server->num_clients == 0) {
-        mutka_set_errmsg("Trying to remove client(socket_fd = %i, uid = %i) from empty array.",
-                client->socket_fd, client->uid);
         p_unlock_server_mutex_ifneed(server);
         return;
     }
@@ -281,7 +295,7 @@ void mutka_server_remove_client
     int remove_index = -1;
 
     for(uint32_t i = 0; i < server->num_clients; i++) {
-        if(server->clients[i].socket_fd == client->socket_fd) {
+        if(server->clients[i].uid == client_uid) {
             remove_index = i;
             break;
         }
@@ -294,15 +308,46 @@ void mutka_server_remove_client
         for(uint32_t i = remove_index; i < server->num_clients-1; i++) {
             server->clients[i] = server->clients[i+1];
         }
-
         server->num_clients--;
     }
     else {
-        mutka_set_errmsg("Cant remove client, it doesnt exist. (socket_fd = %i, uid = %i)",
-                client->socket_fd, client->uid);
+        mutka_set_errmsg("Cant remove client, it doesnt exist. (uid = %i)",
+                client_uid);
     }
 
     p_unlock_server_mutex_ifneed(server);
+}
+
+static void p_mutka_server_process_disconnect_queue(struct mutka_server* server) {
+    if((server->flags & MUTKA_SFLG_SENDING_CLIENT_MSGPUBLKEYS)) {
+        return; // 'mutka_client.send_peerinfo_index' may go out of sync.
+    }
+
+    for(uint32_t i = 0; i < server->num_clients_disconnecting; i++) {
+        mutka_server_remove_client(server, server->client_disconnect_queue[i]);
+    }
+
+    server->num_clients_disconnecting = 0;
+}
+
+static void p_mutka_server_client_disconnecting
+(
+    struct mutka_server* server,
+    struct mutka_client* client
+){
+    if(server->num_clients_disconnecting+1 >= server->config.max_clients) {
+        return;
+    }
+    
+    // Check first if the client is already added to queue.
+    for(uint32_t i = 0; i < server->num_clients_disconnecting; i++) {
+        if(server->client_disconnect_queue[i] == client->uid) {
+            return;
+        }
+    }
+
+    server->client_disconnect_queue
+        [server->num_clients_disconnecting++] = client->uid;
 }
 
 static void p_mutka_server_make_client_uid
@@ -338,7 +383,7 @@ static void p_mutka_server_init_connected_client
     client->uid = 0;
     client->flags = 0;
     client->captcha_retries_left = server->config.max_captcha_retries;        
-
+    client->send_peerinfo_index = 0;
     p_mutka_server_make_client_uid(server, client);
 }
 
@@ -447,23 +492,36 @@ void* mutka_server_acceptor_thread_func(void* arg) {
 void* mutka_server_recvdata_thread_func(void* arg) {
     struct mutka_server* server = (struct mutka_server*)arg;
 
-    while(1) {
+    while(true) {
         pthread_mutex_lock(&server->mutex);
 
         for(size_t i = 0; i < server->num_clients; i++) {
             struct mutka_client* client = &server->clients[i];
            
             int rd = mutka_recv_incoming_packet(&server->inpacket, client->socket_fd);
-            if(rd == M_NEW_PACKET_AVAIL) {
-                mutka_server_handle_packet(server, client);
-            }
-            else
-            if(rd == M_LOST_CONNECTION) {
-                server->config.client_disconnected_callback(server, client);
-                mutka_server_remove_client(server, client);
-                i--;
+            switch(rd) {
+                case M_NEW_PACKET_AVAIL:
+                    mutka_server_handle_packet(server, client);
+                    break;
+
+                case M_LOST_CONNECTION:
+                    server->config.client_disconnected_callback(server, client);
+                    p_mutka_server_client_disconnecting(server, client);
+                    i--;
+                    break;
+
+                case M_ENCRYPTED_RPACKET:
+                    if(mutka_parse_encrypted_rpacket(
+                                &server->inpacket,
+                                &server->inpacket.raw_packet,
+                                &client->mtdata_keys.hshared_key)) {
+                        mutka_server_handle_packet(server, client);
+                    }
+                    break;
             }
         }
+
+        p_mutka_server_process_disconnect_queue(server);
 
         pthread_mutex_unlock(&server->mutex);
         mutka_sleep_ms(100);
@@ -553,6 +611,24 @@ static bool p_client_has_confirmed_captcha
     return (client->flags & MUTKA_SCFLG_CAPTCHA_COMPLETE);
 }
 
+// Is client fully verified? Can they send messages.
+static bool p_client_verified
+(
+    struct mutka_server* server,
+    struct mutka_client* client
+){
+    if(!(client->flags & MUTKA_SCFLG_MTDATAKEYS_EXCHANGED)) {
+        return false;
+    }
+    if(!p_client_has_confirmed_captcha(server, client)) {
+        return false;
+    }
+
+    // TODO: Add server password check.
+
+    return true;
+}
+
             
 
 static void send_test_packet(struct mutka_server* server, struct mutka_client* client) {
@@ -581,9 +657,135 @@ void mutka_server_handle_packet
 ){
     // NOTE: server->mutex is locked here.
 
-    printf("Handling packet, num_elements = %li\n", server->inpacket.num_elements);
-
     switch(server->inpacket.id) {
+
+        case MPACKET_GET_CLIENTS:
+            if(!p_client_verified(server, client)) {
+                return;
+            }
+            if(!(client->flags & MUTKA_SCFLG_HAS_MSGKEYS)) {
+                // Dont allow clients who have not sent their msg public keys  
+                // to get other client's msg public keys.
+                return;
+            }
+            {
+                memset(server->tmp_peer_info, 0, 
+                        server->tmp_peer_info_len > 
+                        MUTKA_TMPPEERINFO_MAX ? MUTKA_TMPPEERINFO_MAX : server->tmp_peer_info_len);
+                server->tmp_peer_info_len = 0;
+
+                
+                if(client->send_peerinfo_index >= server->config.max_clients) {
+                    return;
+                }
+                
+                server->flags |= MUTKA_SFLG_SENDING_CLIENT_MSGPUBLKEYS;
+                bool is_last_peer = (client->send_peerinfo_index+1 >= server->config.max_clients);
+               
+                struct mutka_client* peer = &server->clients[client->send_peerinfo_index];
+                mutka_rpacket_prep(&server->out_raw_packet, MPACKET_GET_CLIENTS);
+
+
+                mutka_rpacket_add_ent(&server->out_raw_packet,
+                        "ask_next",
+                        &is_last_peer,
+                        sizeof(is_last_peer),
+                        RPACKET_ENCODE);
+
+                mutka_rpacket_add_ent(&server->out_raw_packet,
+                        "identity_publkey",
+                        peer->identity_publkey.bytes,
+                        sizeof(peer->identity_publkey.bytes),
+                        RPACKET_ENCODE);
+
+                mutka_rpacket_add_ent(&server->out_raw_packet,
+                        "msg_key_signature",
+                        peer->msg_keys_signature.bytes,
+                        sizeof(peer->msg_keys_signature.bytes),
+                        RPACKET_ENCODE);
+
+                mutka_rpacket_add_ent(&server->out_raw_packet,
+                        "msg_x25519_public",
+                        peer->msg_x25519_publkey.bytes,
+                        sizeof(peer->msg_x25519_publkey.bytes),
+                        RPACKET_ENCODE);
+
+                mutka_rpacket_add_ent(&server->out_raw_packet,
+                        "msg_mlkem_public",
+                        peer->msg_mlkem_publkey.bytes,
+                        sizeof(peer->msg_mlkem_publkey.bytes),
+                        RPACKET_ENCODE);
+
+
+                mutka_send_encrypted_rpacket(
+                        client->socket_fd,
+                        &server->out_raw_packet,
+                        &client->mtdata_keys.hshared_key);
+
+
+
+                client->send_peerinfo_index++;
+                if(client->send_peerinfo_index >= server->config.max_clients) {
+                    client->send_peerinfo_index = 0;
+                    server->flags &= ~MUTKA_SFLG_SENDING_CLIENT_MSGPUBLKEYS;
+                    // ... Ok cool but what about if the client dont respond.
+                    //     All disconnects will hang.
+                    // FIXME ^^^
+                    return;
+                }
+            }
+            return;
+
+        case MPACKET_DEPOSIT_PUBLIC_MSGKEYS:
+            if(server->inpacket.num_elements != 4) {
+                return;
+            }
+            if(!p_client_verified(server, client)) {
+                return;
+            }
+
+            struct mutka_packet_elem* signature_elem = &server->inpacket.elements[0];
+            struct mutka_packet_elem* public_identity_elem = &server->inpacket.elements[1];
+            struct mutka_packet_elem* public_x25519_elem = &server->inpacket.elements[2];
+            struct mutka_packet_elem* public_mlkem_elem = &server->inpacket.elements[3];
+
+
+            if(!mutka_decode(client->identity_publkey.bytes,
+                        sizeof(client->identity_publkey.bytes),
+                        public_identity_elem->data.bytes,
+                        public_identity_elem->data.size)) {
+                mutka_set_errmsg("Failed to decode client(%i)'s public identity key.",
+                        client->uid);
+                return;
+            }
+
+            if(!mutka_decode(client->msg_keys_signature.bytes,
+                        sizeof(client->msg_keys_signature.bytes),
+                        signature_elem->data.bytes,
+                        signature_elem->data.size)) {
+                mutka_set_errmsg("Failed to decode client(%i)'s msg keys signature.");
+                return;
+            }
+            if(!mutka_decode(client->msg_x25519_publkey.bytes,
+                        sizeof(client->msg_x25519_publkey.bytes),
+                        public_x25519_elem->data.bytes,
+                        public_x25519_elem->data.size)) {
+                mutka_set_errmsg("Failed to decode client(%i)'s public x25519 msg key.",
+                        client->uid);
+                return;
+            }
+
+            if(!mutka_decode(client->msg_mlkem_publkey.bytes,
+                        sizeof(client->msg_mlkem_publkey.bytes),
+                        public_mlkem_elem->data.bytes,
+                        public_mlkem_elem->data.size)) {
+                mutka_set_errmsg("Failed to decode client(%i)'s public ML-KEM-1024 msg key.",
+                        client->uid);
+                return;
+            }
+
+            client->flags |= MUTKA_SCFLG_HAS_MSGKEYS;
+            return;
 
         case MPACKET_CAPTCHA:
             if(server->inpacket.num_elements != 1) {
@@ -611,7 +813,8 @@ void mutka_server_handle_packet
                     client->captcha_retries_left--;
                     printf("%i captcha retries left: %i\n", client->uid, client->captcha_retries_left);
                     if(client->captcha_retries_left <= 0) {
-                        mutka_server_remove_client(server, client);
+                        //mutka_server_remove_client(server, client);
+                        p_mutka_server_client_disconnecting(server, client);
                         return;
                     }
                     p_mutka_server_send_captcha_challenge(server, client);
@@ -631,9 +834,11 @@ void mutka_server_handle_packet
                 return;
             }
            
-
-            send_test_packet(server, client);
-
+            // Echo back to let client know everything is okay on this side as well.
+            mutka_rpacket_prep(&server->out_raw_packet,
+                    MPACKET_METADATA_KEY_EXHCANGE_COMPLETE);
+            
+            mutka_send_clear_rpacket(client->socket_fd, &server->out_raw_packet);
             printf("\033[32mMetadata key exchange with %i is complete.\033[0m\n", client->uid);
             return;
 

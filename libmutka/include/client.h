@@ -14,7 +14,7 @@
 #define MUTKA_HOST_ADDR_MAX 16
 #define MUTKA_HOST_PORT_MAX 8
 #define MUTKA_CAPTCHA_MAX 6
-
+#define MUTKA_TMPPEERINFO_MAX (1024 * 8)
 
 #ifdef MUTKA_CLIENT
 
@@ -44,6 +44,7 @@
     // Client has been completely verified and can send messages.
     #define MUTKA_SCFLG_VERIFIED (1 << 3)
     
+    #define MUTKA_SCFLG_HAS_MSGKEYS (1 << 4)
 
 #endif
 
@@ -120,9 +121,9 @@ struct mutka_client {
 
 #ifdef MUTKA_CLIENT // (Not on server side)
     
-    pthread_mutex_t      mutex;
-    
-    struct mutka_client_cfg config;
+    pthread_mutex_t  mutex;
+    struct mutka_client_cfg  config;
+    struct mutka_cipher_keys msg_keys; // 'hshared_key' is not used for msg_keys.
  
     char                host_addr [MUTKA_HOST_ADDR_MAX];
     char                host_port [MUTKA_HOST_PORT_MAX];
@@ -130,15 +131,33 @@ struct mutka_client {
     uint32_t            host_port_len;
     key_mldsa87_publ_t  host_mldsa87_publkey;
 
-    uint8_t   client_nonce[16];
 
     struct mutka_raw_packet  out_raw_packet;
     struct mutka_packet      inpacket; // Last received parsed packet.
     
     void(*packet_received_callback)(struct mutka_client*);
 
+    uint8_t client_nonce[16];
+    
+    // This is used when a client requests
+    // other client's info and must parse it.
+    // See 'MPACKET_GET_CLIENTS'
+    char* tmp_peer_info;
+
 
 #elifdef MUTKA_SERVER // (Not on client side)
+
+    key_mldsa87_publ_t   identity_publkey;
+    signature_mldsa87_t  msg_keys_signature;
+    key_mlkem1024_publ_t msg_mlkem_publkey;
+    key128bit_t          msg_x25519_publkey;
+
+    // When client requests all other client's
+    // message public keys and signature,
+    // the server must send one client's info at a time.
+    // Because the data can be over 20 kilobytes.
+    // This value keeps track of which client was sent.
+    uint32_t send_peerinfo_index;
 
     int uid; // Random unique ID.
 
@@ -159,6 +178,9 @@ bool mutka_read_public_identity     (struct mutka_client_cfg* config);
 struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, char* port);
 void mutka_init_metadata_key_exchange(struct mutka_client* client);
 void mutka_send_captcha_answer(struct mutka_client* client, char* answer, size_t answer_len);
+
+void mutka_gen_new_msgkeys(struct mutka_client* client);
+void mutka_send_message(struct mutka_client* client, char* message, size_t message_len);
 
 // This function behaves little bit differently depending on the
 // Environment which the function was called from MUTKA_ENV_SERVER or MUTKA_ENV_CLIENT

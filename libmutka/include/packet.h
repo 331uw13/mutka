@@ -7,12 +7,20 @@
 #include "string.h"
 #include "key.h"
 
-#define MUTKA_RAW_PACKET_DEFMEMSIZE (1024 * 24) 
+#define MUTKA_RAW_PACKET_DEFMEMSIZE (1024 * 48)
 
 
 // Encoding options
 #define RPACKET_ENCODE_NONE    0x01
 #define RPACKET_ENCODE         0x02
+
+// This is used to append back of encrypted packets
+// it is an identifier for the packet parser to know if it content is encrypted or not.
+// Doesnt really matter what it is but as long as 0 bytes dont appear in middle.
+#define MUTKA_ENCRYPTED_PACKET_TAIL 0x30FFFFFFEEEEEEEE
+#define MUTKA_ENCRYPTED_PACKET_TAIL_NBYTES 8
+
+
 
 
 struct mutka_raw_packet {
@@ -41,12 +49,20 @@ struct mutka_packet {
 };
 
 
+
 enum mutka_packet_ids : int {
 
     // If received packet expected_size doesnt match received size.
     // This packet will be sent.
     // TODO: MPACKET_RESEND,
 
+    // MUTKA_SERVER_ENABLE_CAPTCHA must be set for this to be used.
+    // After the metadata keys have been exchanged
+    // and client is not yet verified
+    // It will send this packet containing the captcha buffer to client.
+    // If the answer is correct and server doesnt have password enabled
+    // the client is verified after good response.
+    MPACKET_CAPTCHA,
 
     // When the client connects to server
     // the server will send its longterm ML-DSA-87 public key
@@ -72,21 +88,24 @@ enum mutka_packet_ids : int {
     MPACKET_EXCHANGE_METADATA_KEYS,
 
     // Client must respond to metadata key exchange
-    // if it was succesfully completed.
+    // if it was succesfully completed server will echo this packet.
     MPACKET_METADATA_KEY_EXHCANGE_COMPLETE,
 
+    // Clients must inform the server about their
+    // public message keys and public identity key.
+    // This is done because the server must know message receiver's public keys
+    // for message sender to encrypt the message correctly for the receiver.
+    MPACKET_DEPOSIT_PUBLIC_MSGKEYS,
 
-    // MUTKA_SERVER_ENABLE_CAPTCHA must be set for this to be used.
-    // After the metadata keys have been exchanged
-    // and client is not yet verified
-    // It will send this packet containing the captcha buffer to client.
-    // If the answer is correct and server doesnt have password enabled
-    // the client is verified after good response.
-    MPACKET_CAPTCHA,
+    // When client sends this packet to server.
+    // the server may respond with
+    // other client's public keys and random unique identifier
+    // required for the sender to encrypt messages for each receiver.
+    MPACKET_GET_CLIENTS,
+
 
 
     MPACKET_TEST,
-
     MUTKA_NUM_PACKETS
 };
 

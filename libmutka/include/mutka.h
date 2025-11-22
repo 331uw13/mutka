@@ -15,13 +15,6 @@
 #define MUTKA_ERRMSG_MAX_SIZE 1023
 #endif
 
-// This is used to append back of encrypted packets
-// it is an identifier for the packet parser to know if it content is encrypted or not.
-// Doesnt really matter what it is but as long as 0 bytes dont appear in middle.
-#define MUTKA_ENCRYPTED_PACKET_TAIL 0x30FFFFFFEEEEEEEE
-#define MUTKA_ENCRYPTED_PACKET_TAIL_NBYTES 8
-
-
 void mutka_set_errmsg(const char* message, ...);
 const char* mutka_get_errmsg();
 

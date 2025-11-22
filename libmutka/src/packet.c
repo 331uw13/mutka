@@ -11,9 +11,34 @@
 #include "../include/memory.h"
 #include "../include/cryptography.h"
 
+
+#define RPACKET_HEADER_SIZE (sizeof(int)*2)
+
 //#define DEBUG
 
+#ifdef DEBUG
+static void p_dump_packet(struct mutka_raw_packet* packet, const char* label) {
+    printf("\033[90m===[ %s ]=======\033[0m\n", label);
+    int column_count = 0;
 
+    char* ch = &packet->data[0];
+    while(ch < packet->data + packet->size) {
+
+        printf("%02X ", (uint8_t)*ch);
+
+        column_count++;
+        if(column_count > 32) {
+            printf("\n");
+            column_count = 0;
+        }
+        ch++;
+    }
+    if(column_count > 0) {
+        printf("\n");
+    }
+    printf("\033[90m`-> %i bytes ---------\033[0m\n", packet->size);
+}
+#endif
 
 
 void mutka_alloc_rpacket(struct mutka_raw_packet* packet, size_t size){
@@ -98,7 +123,7 @@ bool mutka_rpacket_add_ent
     }
 
 
-    // Format: ... label:<encoding_option>data| ...
+    // Format: ... <label>:<encoding_option><data>| ...
 
     if(!p_mutka_packet_add_bytes(packet, label, strlen(label))) { 
         packet->has_write_error = true;
@@ -172,6 +197,9 @@ void mutka_send_clear_rpacket(int socket_fd, struct mutka_raw_packet* packet) {
         return;
     }
 
+#ifdef DEBUG
+    p_dump_packet(packet, "Sent (Not Encrypted)");
+#endif
     send(socket_fd, packet->data, packet->size, 0);
 }
 
@@ -187,7 +215,8 @@ static bool p_mutka_packet_memcheck(struct mutka_packet* packet) {
             &packet->num_elems_allocated,
             packet->num_elems_allocated + 1);
 
-    if(old_num_elems_alloc == packet->num_elems_allocated) {
+    if(old_num_elems_alloc >= packet->num_elems_allocated) {
+        mutka_set_errmsg("Packet parser experienced unexpected memory error :(");
         goto out;
     }
 
@@ -215,10 +244,64 @@ void mutka_clear_packet(struct mutka_packet* packet) {
     packet->id = -1;
 }
 
+static bool p_is_rpacket_data_safe(struct mutka_raw_packet* raw_packet) {
+    bool result = false;
+
+    if(raw_packet->memsize < raw_packet->size) {
+        mutka_set_errmsg("Received packet has bad memory size.");
+        goto out;
+    }
+    if(raw_packet->size < RPACKET_HEADER_SIZE) {
+        mutka_set_errmsg("Received packet doesnt have good header.");
+        goto out;
+    }
+    if(raw_packet->size == RPACKET_HEADER_SIZE) {
+        result = true;
+        goto out;
+    }
+
+    int index = 0;
+
+    const char whitelist_bytes[] = {
+        0x0,
+        0x1, // Encoding option (RPACKET_ENCODE_NONE)
+        0x2  // Encoding option (RPACKET_ENCODE)
+    };
+
+    char* ch = &raw_packet->data[RPACKET_HEADER_SIZE];
+    while(ch < raw_packet->data + raw_packet->size) {
+        
+        if((*ch < 0x20) || (*ch > 0x7E)) {
+            bool good_byte = false;
+
+            for(uint32_t i = 0; i < sizeof(whitelist_bytes); i++) {
+                if(*ch == whitelist_bytes[i]) {
+                    good_byte = true;
+                }
+            }
+
+            if(!good_byte) {
+                printf("%s: %02X at %i\n", __func__, (uint8_t)*ch, index);
+                goto out;
+            }
+        }
+        index++;
+        ch++;
+    }
+
+    result = true;
+
+out:
+    return result;
+}
 
 bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* raw_packet) {
-    if(raw_packet->size < sizeof(packet->id)) {
-        mutka_set_errmsg("Packet doesnt have any useful data.");
+#ifdef DEBUG
+    p_dump_packet(raw_packet, "received");
+#endif
+
+    if(!p_is_rpacket_data_safe(raw_packet)) {
+        mutka_set_errmsg("Received raw packet data seems to be somehow malformed.");
         return false;
     }
 
@@ -237,11 +320,6 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
         return false;
     }
     
-#ifdef DEBUG
-    printf("packet->expected_size = %i, raw_packet->size = %i\n", packet->expected_size, raw_packet->size);
-    printf("packet->num_elements = %li\n", packet->num_elements);
-#endif
-
     if(!p_mutka_packet_memcheck(packet)) {
         return false;
     }
@@ -312,6 +390,10 @@ void mutka_send_encrypted_rpacket
     if(!p_mutka_add_packet_expected_size(packet)) {
         return;
     }
+
+#ifdef DEBUG
+    p_dump_packet(packet, "Sent (Before encryption)");
+#endif
 
     struct mutka_str cipher;
     struct mutka_str out;
@@ -438,7 +520,7 @@ bool mutka_parse_encrypted_rpacket
         goto free_and_out;
     }
 
-    if(remaining > 1024*16) {
+    if(remaining > 1024*64) {
         mutka_set_errmsg("%s: Remaining cipher text seems to be too large to accept.", __func__);
         goto free_and_out;
     }

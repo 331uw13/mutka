@@ -167,7 +167,8 @@ int main(int argc, char** argv) {
 
 
 
-    printf("\033[35mPress [q] then [enter] to disconnect\033[0m\n");
+    printf("\033[35mPress [q] then [enter] to disconnect.\n"
+                    "Press [r] then [enter] to send message.\033[0m\n");
 
     // /dev/stdin is opened in nonblocking mode
     // and mutex is used for it because callbacks are from another thread. 
@@ -187,6 +188,10 @@ int main(int argc, char** argv) {
 
         if(input_ch == 'q') {
             break;
+        }
+        if(input_ch == 'r') {
+            const char* message = "Hello!";
+            mutka_send_message(client, message, strlen(message));
         }
 
         // Check if we should disconnect.

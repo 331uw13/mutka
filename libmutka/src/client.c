@@ -252,10 +252,25 @@ out:
 }
 
 bool mutka_read_public_identity(struct mutka_client_cfg* config) {
+    bool result = false;
+    char* file_data = NULL;
+    size_t file_size = 0;
+    if(!mutka_map_file(config->public_identity_path, PROT_READ,
+                &file_data, &file_size)) {
+        return false;
+    }
 
-    printf("%s: (TODO: IMPLEMENT)\n", __func__);
+    if(file_size != sizeof(config->identity_publkey)) {
+        mutka_set_errmsg("Unexpected public identity file size.");
+        goto unmap_and_out;
+    }
 
-    return true;
+    memcpy(config->identity_publkey.bytes, file_data, file_size);
+    
+    result = true;
+unmap_and_out:
+    munmap(file_data, file_size);
+    return result;
 }
 
 
@@ -940,6 +955,12 @@ void mutka_client_handle_packet(struct mutka_client* client) {
     // Check for internal packets first.
     switch(client->inpacket.id) {
 
+        case MPACKET_GET_CLIENTS:
+            {
+                printf("MPACKET_GET_CLIENTS: %i\n", client->inpacket.num_elements);
+            }
+            return;
+
         case MPACKET_TEST:
             printf("%s\n", client->inpacket.elements[0].data.bytes);
             return;
@@ -1098,9 +1119,92 @@ void mutka_client_handle_packet(struct mutka_client* client) {
                 mutka_send_clear_rpacket(client->socket_fd, &client->out_raw_packet);
             }
             return;
+
+        case MPACKET_METADATA_KEY_EXHCANGE_COMPLETE:
+            mutka_gen_new_msgkeys(client);
+            return;
     }
 
     client->packet_received_callback(client);
+}
+
+void mutka_gen_new_msgkeys(struct mutka_client* client) {
+    if(!mutka_generate_cipher_keys(&client->msg_keys)) {
+        client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
+        return;
+    }
+
+    // Server has to know about the public message keys.
+    mutka_rpacket_prep(&client->out_raw_packet, MPACKET_DEPOSIT_PUBLIC_MSGKEYS);
+
+
+    // Create signature from X25519 public key and ML-KEM-1024 public key.
+    // and sign it with self private identity key.
+    // This way the receiver can be sure that the keys
+    // they will be using for encrypting the message
+    // do belong to a trusted person and not malicious server.
+    uint8_t combined_publkey_hash[SHA512_DIGEST_LENGTH * 2] = { 0 };
+
+    SHA512(client->msg_keys.x25519_publkey.bytes,
+            sizeof(client->msg_keys.x25519_publkey.bytes),
+            combined_publkey_hash);
+
+    SHA512(client->msg_keys.mlkem_publkey.bytes,
+            sizeof(client->msg_keys.mlkem_publkey.bytes),
+            combined_publkey_hash + SHA512_DIGEST_LENGTH);
+
+    signature_mldsa87_t signature;
+    if(!mutka_openssl_MLDSA87_sign(
+                MUTKA_VERSION_STR"(PUBLIC_IDENTITY_SIGNATURE)",
+                &signature,
+                &client->config.identity_privkey,
+                combined_publkey_hash,
+                sizeof(combined_publkey_hash))) {
+        mutka_set_errmsg("%s: Failed to sign public keys.", __func__);
+        client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
+    }
+
+    mutka_rpacket_add_ent(&client->out_raw_packet,
+            "signature",
+            signature.bytes,
+            sizeof(signature.bytes),
+            RPACKET_ENCODE);
+    
+    mutka_rpacket_add_ent(&client->out_raw_packet,
+            "public_identity",
+            client->config.identity_publkey.bytes,
+            sizeof(client->config.identity_publkey.bytes),
+            RPACKET_ENCODE);
+
+    mutka_rpacket_add_ent(&client->out_raw_packet,
+            "public_x25519",
+            client->msg_keys.x25519_publkey.bytes,
+            sizeof(client->msg_keys.x25519_publkey.bytes),
+            RPACKET_ENCODE);
+
+    mutka_rpacket_add_ent(&client->out_raw_packet,
+            "public_mlkem",
+            client->msg_keys.mlkem_publkey.bytes,
+            sizeof(client->msg_keys.mlkem_publkey.bytes),
+            RPACKET_ENCODE);
+
+    mutka_send_encrypted_rpacket(
+            client->socket_fd,
+            &client->out_raw_packet,
+            &client->mtdata_keys.hshared_key);
+}
+
+void mutka_send_message(struct mutka_client* client, char* message, size_t message_len) {
+
+
+    mutka_rpacket_prep(&client->out_raw_packet, MPACKET_GET_CLIENTS);
+    mutka_send_encrypted_rpacket(
+            client->socket_fd,
+            &client->out_raw_packet,
+            &client->mtdata_keys.hshared_key);
+
+    printf("%s\n", __func__);
+
 }
 
 

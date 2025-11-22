@@ -48,6 +48,7 @@ void mutka_str_alloc(struct mutka_str* str) {
 
 void mutka_str_free(struct mutka_str* str) {
     if(str->bytes) {
+        mutka_str_clear(str);
         free(str->bytes);
         str->bytes = NULL;
         str->memsize = 0;
