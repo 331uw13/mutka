@@ -204,30 +204,38 @@ void mutka_send_clear_rpacket(int socket_fd, struct mutka_raw_packet* packet) {
 }
 
 
+
+#define MEMCHECK_NOACTNEEDED 0
+#define MEMCHECK_BUFRESIZED 1
+#define MEMCHECK_ERROR 2
+
 // Allocate more space for packet 'elements' if needed.
-static bool p_mutka_packet_memcheck(struct mutka_packet* packet) { 
+static int p_mutka_packet_memcheck(struct mutka_packet* packet) { 
     bool result = false;
     size_t old_num_elems_alloc = packet->num_elems_allocated;
 
-    packet->elements = mutka_srealloc_array(
-            sizeof(*packet->elements), 
-            packet->elements,
-            &packet->num_elems_allocated,
-            packet->num_elems_allocated + 1);
+    
+    if(packet->num_elements+1 >= packet->num_elems_allocated) {
+        packet->elements = mutka_srealloc_array(
+                sizeof(*packet->elements), 
+                packet->elements,
+                &packet->num_elems_allocated,
+                packet->num_elems_allocated + 1);
 
-    if(old_num_elems_alloc >= packet->num_elems_allocated) {
-        mutka_set_errmsg("Packet parser experienced unexpected memory error :(");
-        goto out;
+        if(old_num_elems_alloc >= packet->num_elems_allocated) {
+            mutka_set_errmsg("Packet parser experienced unexpected memory error :(");
+            return MEMCHECK_ERROR;
+        }
+
+        for(size_t i = old_num_elems_alloc; i < packet->num_elems_allocated; i++) {
+            packet->elements[i].encoding = 0;
+            packet->elements[i].label.bytes = NULL;
+            packet->elements[i].data.bytes = NULL;
+        }
+        return MEMCHECK_BUFRESIZED;
     }
 
-    for(size_t i = old_num_elems_alloc; i < packet->num_elems_allocated; i++) {
-        packet->elements[i].label.bytes = NULL;
-        packet->elements[i].data.bytes = NULL;
-    }
-
-    result = true;
-out:
-    return result;
+    return MEMCHECK_NOACTNEEDED;
 }
 
 void mutka_clear_packet(struct mutka_packet* packet) {
@@ -264,8 +272,9 @@ static bool p_is_rpacket_data_safe(struct mutka_raw_packet* raw_packet) {
 
     const char whitelist_bytes[] = {
         0x0,
-        0x1, // Encoding option (RPACKET_ENCODE_NONE)
-        0x2  // Encoding option (RPACKET_ENCODE)
+        0x0A, // New line character.
+        0x1,  // Encoding option (RPACKET_ENCODE_NONE)
+        0x2   // Encoding option (RPACKET_ENCODE)
     };
 
     char* ch = &raw_packet->data[RPACKET_HEADER_SIZE];
@@ -320,7 +329,7 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
         return false;
     }
     
-    if(!p_mutka_packet_memcheck(packet)) {
+    if(p_mutka_packet_memcheck(packet) == MEMCHECK_ERROR) {
         return false;
     }
 
@@ -351,19 +360,32 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
         curr_elem->encoding = (uint8_t)*ch;
         ch++;
 
+
         // Read element data:
         while(ch < lastch) {
             if(*ch == '|') { // Element separator.
-                if(!p_mutka_packet_memcheck(packet)) {
+                int memcheck_res = p_mutka_packet_memcheck(packet);
+                if(memcheck_res == MEMCHECK_ERROR) {
                     return false;
                 }
-    
+                if(memcheck_res == MEMCHECK_BUFRESIZED) {
+                    curr_elem = &packet->elements[packet->num_elements];
+                }
+
                 if(curr_elem->encoding == RPACKET_ENCODE_NONE) {
                     mutka_str_nullterm(&curr_elem->data);
                 }
                 
                 packet->num_elements++;
+                if(packet->num_elements >= packet->num_elems_allocated) {
+                    return false;
+                }
+
                 curr_elem = &packet->elements[packet->num_elements];
+                if(!curr_elem) {
+                    return false;
+                }
+
                 ch++;
                 break;
             }

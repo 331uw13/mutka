@@ -20,14 +20,15 @@
 
     // Mutka client config flags (for: mutka_client_cfg)
     
-    #define MUTKA_CCFLG_HAS_IDENTITY_KEYS (1 << 0)
+    #define MUTKA_CCFLG_HAS_PRIVIDENTITY_KEY (1 << 0)
     #define MUTKA_CCFLG_CONFIG_VALIDATED (1 << 1)
 
     // Mutka client flags (for: struct mutka_client)
     
     #define MUTKA_CLFLG_SHOULD_DISCONNECT (1 << 2)
     #define MUTKA_CLFLG_WAITING_CAPTCHA_INPUT (1 << 3)
-    
+    #define MUTKA_CLFLG_SENDING_MSG (1 << 3)
+
 
 #elifdef MUTKA_SERVER
     // Mutka server side client flags (for: struct mutka_client)
@@ -106,6 +107,15 @@ struct mutka_client_cfg {
 };
 
 
+// Data needed for client to encrypt message for each peer.
+struct mutka_client_peer_msgkeys {
+    int uid;
+    signature_mldsa87_t  signature;
+    key_mldsa87_publ_t   identity_publkey;
+    key_mlkem1024_publ_t mlkem_publkey;
+    key128bit_t          x25519_publkey;
+};
+
 
 struct mutka_client {
     
@@ -124,12 +134,22 @@ struct mutka_client {
     pthread_mutex_t  mutex;
     struct mutka_client_cfg  config;
     struct mutka_cipher_keys msg_keys; // 'hshared_key' is not used for msg_keys.
- 
+    struct mutka_str         plaintext_msg; // Stored temporarily.
+
+    struct mutka_client_peer_msgkeys* peer_msg_keys;
+    int8_t                            num_peer_msg_keys;
+
+    // Trusted peers ML-DSA-87 public keys from "~/.mutka/nickname/trusted_peers/"
+    // are stored as SHA512 hash.
+    sha512_hash_t*                    trusted_peers_sha512;
+    uint32_t                          num_trusted_peers;
+
     char                host_addr [MUTKA_HOST_ADDR_MAX];
     char                host_port [MUTKA_HOST_PORT_MAX];
     uint32_t            host_addr_len;
     uint32_t            host_port_len;
     key_mldsa87_publ_t  host_mldsa87_publkey;
+    uint8_t             host_max_clients;
 
 
     struct mutka_raw_packet  out_raw_packet;
@@ -139,27 +159,18 @@ struct mutka_client {
 
     uint8_t client_nonce[16];
     
-    // This is used when a client requests
-    // other client's info and must parse it.
-    // See 'MPACKET_GET_CLIENTS'
-    char* tmp_peer_info;
-
-
 #elifdef MUTKA_SERVER // (Not on client side)
-
-    key_mldsa87_publ_t   identity_publkey;
-    signature_mldsa87_t  msg_keys_signature;
-    key_mlkem1024_publ_t msg_mlkem_publkey;
-    key128bit_t          msg_x25519_publkey;
 
     // When client requests all other client's
     // message public keys and signature,
     // the server must send one client's info at a time.
     // Because the data can be over 20 kilobytes.
     // This value keeps track of which client was sent.
-    uint32_t send_peerinfo_index;
+    uint8_t send_peerinfo_index;
 
     int uid; // Random unique ID.
+
+    struct mutka_client_peer_msgkeys msg_keys;
 
     // Expected captcha answer.
     char exp_captcha_answer [MUTKA_CAPTCHA_MAX]; 
@@ -173,7 +184,6 @@ bool mutka_validate_client_cfg      (struct mutka_client_cfg* config, char* nick
 bool mutka_client_identity_exists   (struct mutka_client_cfg* config);
 bool mutka_new_client_identity      (struct mutka_client_cfg* config, char* privkey_passphase, size_t passphase_len);
 bool mutka_decrypt_client_identity  (struct mutka_client_cfg* config, char* passphase, size_t passphase_len);
-bool mutka_read_public_identity     (struct mutka_client_cfg* config);
 
 struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, char* port);
 void mutka_init_metadata_key_exchange(struct mutka_client* client);

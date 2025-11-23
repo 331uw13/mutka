@@ -50,8 +50,5 @@ ssize_t mutka_charptr_find(char* data, size_t data_size, char* part, size_t part
 
 bool mutka_strcmp(char* A, size_t A_size, char* B, size_t B_size);
 
-//void mutka_bytes_to_hexstr(struct mutka_str* in, struct mutka_str* out);
-//void mutka_hexstr_to_bytes(struct mutka_str* in, struct mutka_str* out);
-
 
 #endif

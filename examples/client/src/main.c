@@ -138,12 +138,6 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-
-    if(!mutka_read_public_identity(&config)) {
-        return 1;
-    }
-
-
     printf("Enter passphase for private identity-key: ");
     fflush(stdout);
     char passphase[512] = { 0 };
@@ -190,7 +184,7 @@ int main(int argc, char** argv) {
             break;
         }
         if(input_ch == 'r') {
-            const char* message = "Hello!";
+            const char* message = "Hello! Cryptography is interesting.";
             mutka_send_message(client, message, strlen(message));
         }
 

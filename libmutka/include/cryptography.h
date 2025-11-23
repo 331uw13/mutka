@@ -18,6 +18,13 @@ typedef struct {
 }
 signature_mldsa87_t;
 
+typedef struct {
+    uint8_t bytes[SHA512_DIGEST_LENGTH];
+}
+sha512_hash_t;
+
+
+
 
 struct mutka_cipher_keys {
     key128bit_t          x25519_privkey;
@@ -27,11 +34,38 @@ struct mutka_cipher_keys {
     key_mlkem1024_publ_t mlkem_publkey;
 
     // Hybrid shared key. HKDF(x25519_shared_key + mlkem_shared_key)
-    // Use this key for encrypting/decrypting
     key128bit_t hshared_key; 
 };
 
 bool mutka_generate_cipher_keys(struct mutka_cipher_keys* keys);
+
+// Get shared hybrid key from self cipher keys and peer's public keys.
+// This function will return 'true' if everything went well and signature was verified.
+// Otherwise 'false' is returned.
+bool mutka_hybrid_kem_decaps
+(
+    key128bit_t*              hybrid_key_out,
+    struct mutka_cipher_keys* self_keys,
+    key_mldsa87_publ_t*       self_sign_verify_key,
+    key128bit_t*              peer_x25519_publkey,
+    key_mlkem1024_cipher_t*   peer_mlkem_cipher,
+    signature_mldsa87_t*      peer_signature,
+    const char*               signature_context,
+    uint8_t*                  hkdf_salt,
+    const char*               hkdf_info
+);
+
+
+bool mutka_hybrid_kem_encaps
+(
+    key128bit_t*              hybrid_key_out,
+    key_mlkem1024_cipher_t*   mlkem_cipher_out,
+    struct mutka_cipher_keys* self_keys,
+    key128bit_t*              peer_x25519_publkey,
+    key_mlkem1024_publ_t*     peer_mlkem_publkey,
+    uint8_t*                  hkdf_salt,
+    const char*               hkdf_info
+);
 
 // TODO: Refactor to use inline function.
 #define MUTKA_CLEAR_KEY(key) memset(key.bytes, 0, sizeof(key.bytes))
@@ -85,19 +119,16 @@ bool mutka_openssl_derive_shared_secret
 
 bool mutka_openssl_encaps
 (
-    uint8_t* wrappedkey_out,
-    size_t   wrappedkey_out_memsize,
-    size_t*  wrappedkey_out_len,
-    key128bit_t* shared_secret_out,
-    key_mlkem1024_publ_t* peer_publkey
+    key_mlkem1024_cipher_t*  mlkem_cipher_out,
+    key128bit_t*             shared_secret_out,
+    key_mlkem1024_publ_t*    peer_publkey
 );
 
 bool mutka_openssl_decaps
 (
-    key128bit_t* unwrappedkey_out,
-    uint8_t* wrappedkey,
-    size_t   wrappedkey_len,
-    key_mlkem1024_priv_t* self_privkey
+    key128bit_t*             shared_secret_out,
+    key_mlkem1024_cipher_t*  mlkem_cipher,
+    key_mlkem1024_priv_t*    self_privkey
 );
 
 

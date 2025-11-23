@@ -20,7 +20,7 @@ static bool mutka_str_memcheck(struct mutka_str* str, uint32_t size_add) {
     }
 
     if((str->size + size_add) < str->memsize) {
-        return true;
+        return true; // No need to resize.
     }
 
 
@@ -102,35 +102,6 @@ void mutka_str_clear(struct mutka_str* str) {
 void mutka_str_reserve(struct mutka_str* str, uint32_t size) {
     mutka_str_memcheck(str, size);
 }
-
-/* 
-static const char HEX[] = "0123456789ABCDEF";
-void mutka_bytes_to_hexstr(struct mutka_str* in, struct mutka_str* out) {
-    for(uint32_t i = 0; i < in->size; i++) {
-        mutka_str_pushbyte(out, HEX[ (abs(in->bytes[i]) >> 4) % 0xF ]);
-        mutka_str_pushbyte(out, HEX[ abs(in->bytes[i]) & 0xF ]);
-    }
-}
-
-#define HEXBUF_SIZE 4
-void mutka_hexstr_to_bytes(struct mutka_str* in, struct mutka_str* out) {
-    
-    char hexbuf[HEXBUF_SIZE] = { 0 };
-    uint32_t hexbuf_i = 0;
-    
-    mutka_str_clear(out);
-
-    for(uint32_t i = 0; i < in->size; i++) {
-        hexbuf[hexbuf_i++] = in->bytes[i];
-
-        if(hexbuf_i >= 2) {
-            mutka_str_pushbyte(out, strtol(hexbuf, NULL, 16));
-            memset(hexbuf, 0, hexbuf_i);
-            hexbuf_i = 0;
-        }
-    }
-}
-*/
 
 char mutka_str_lastbyte(struct mutka_str* str) {
     if(!str) {

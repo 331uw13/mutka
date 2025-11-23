@@ -30,7 +30,7 @@ struct mutka_server;
 
 struct mutka_server_cfg {
     uint16_t port;
-    uint32_t max_clients;
+    uint8_t  max_clients;
     int      flags;
     int8_t   max_captcha_retries;
 

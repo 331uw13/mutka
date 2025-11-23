@@ -91,6 +91,10 @@ enum mutka_packet_ids : int {
     // if it was succesfully completed server will echo this packet.
     MPACKET_METADATA_KEY_EXHCANGE_COMPLETE,
 
+    // The server will respond with general info to client
+    // when metadata key exchange is complete.
+    MPACKET_GENERAL_SERVER_INFO,
+    
     // Clients must inform the server about their
     // public message keys and public identity key.
     // This is done because the server must know message receiver's public keys
@@ -101,8 +105,15 @@ enum mutka_packet_ids : int {
     // the server may respond with
     // other client's public keys and random unique identifier
     // required for the sender to encrypt messages for each receiver.
-    MPACKET_GET_CLIENTS,
+    MPACKET_GET_PEER_PUBLKEYS,
 
+    // Client can send encrypted messages with this packet
+    // after they received all peers public message keys.
+    MPACKET_SEND_MSG,
+
+    // Server sends this packet when it received MPACKET_SEND_MSG
+    // and sent it to receiver.
+    MPACKET_MSG_RECV,
 
 
     MPACKET_TEST,

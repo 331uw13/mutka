@@ -342,9 +342,8 @@ out:
 
 bool mutka_openssl_decaps
 (
-    key128bit_t* unwrappedkey_out,
-    uint8_t* wrappedkey,
-    size_t   wrappedkey_len,
+    key128bit_t* shared_secret_out,
+    key_mlkem1024_cipher_t* mlkem_cipher,
     key_mlkem1024_priv_t* self_privkey
 ){
     bool result = false;
@@ -374,7 +373,7 @@ bool mutka_openssl_decaps
 
     ctx = EVP_PKEY_CTX_new(pkey, NULL);
 
-    size_t unwrappedkey_len = sizeof(unwrappedkey_out->bytes);
+    size_t shared_secret_len = sizeof(shared_secret_out->bytes);
 
     if(!EVP_PKEY_decapsulate_init(ctx, NULL)) {
         openssl_error();
@@ -382,13 +381,11 @@ bool mutka_openssl_decaps
     }
 
     if(!EVP_PKEY_decapsulate(ctx,
-                unwrappedkey_out->bytes, &unwrappedkey_len,
-                wrappedkey, wrappedkey_len)) {
+                shared_secret_out->bytes, &shared_secret_len,
+                mlkem_cipher->bytes, sizeof(mlkem_cipher->bytes))) {
         openssl_error();
         goto out;
     }
-
-    //*unwrappedkey_out_len = unwrappedkey_len;
 
     result = true;
 
@@ -408,11 +405,9 @@ out:
 
 bool mutka_openssl_encaps
 (
-    uint8_t*  wrappedkey_out,
-    size_t    wrappedkey_out_memsize,
-    size_t*   wrappedkey_out_len,
-    key128bit_t* sharedsecret_out,
-    key_mlkem1024_publ_t* peer_publkey
+    key_mlkem1024_cipher_t*  mlkem_cipher_out,
+    key128bit_t*             sharedsecret_out,
+    key_mlkem1024_publ_t*    peer_publkey
 ){
     bool result = false;
     EVP_PKEY_CTX* pkey_ctx = NULL;
@@ -442,7 +437,7 @@ bool mutka_openssl_encaps
     ctx = EVP_PKEY_CTX_new(pkey, NULL);
 
 
-    size_t wrappedkey_len = wrappedkey_out_memsize;
+    size_t cipherkey_len = sizeof(mlkem_cipher_out->bytes);
     size_t shared_secret_len = sizeof(sharedsecret_out->bytes);
 
     if(!EVP_PKEY_encapsulate_init(ctx, NULL)) {
@@ -451,13 +446,11 @@ bool mutka_openssl_encaps
     }
 
     if(!EVP_PKEY_encapsulate(ctx, 
-                wrappedkey_out, &wrappedkey_len,
+                mlkem_cipher_out->bytes, &cipherkey_len,
                 sharedsecret_out->bytes, &shared_secret_len)) {
         openssl_error();
         goto out;
     }
-
-    *wrappedkey_out_len = wrappedkey_len;
 
     result = true;
 
@@ -898,3 +891,163 @@ out:
     return result;
 }
 
+bool mutka_hybrid_kem_decaps
+(
+    key128bit_t*              hybrid_key_out,
+    struct mutka_cipher_keys* self_keys,
+    key_mldsa87_publ_t*       self_sign_verify_key,
+    key128bit_t*              peer_x25519_publkey,
+    key_mlkem1024_cipher_t*   peer_mlkem_cipher,
+    signature_mldsa87_t*      peer_signature,
+    const char*               signature_context,
+    uint8_t*                  hkdf_salt,
+    const char*               hkdf_info
+){
+    bool result = false;
+
+     
+    // Combine SHA512(x25519_public) and SHA512(mlkem_cipher)
+    // For verifying the signature.
+    uint8_t peer_keys_combined_hash[SHA512_DIGEST_LENGTH * 2] = { 0 };
+    
+    // Peer X25519 key hash
+    SHA512(peer_x25519_publkey->bytes,
+            sizeof(peer_x25519_publkey->bytes),
+            peer_keys_combined_hash);
+
+    // Peer ML-KEM-1024 cipher.
+    SHA512(peer_mlkem_cipher->bytes,
+            sizeof(peer_mlkem_cipher->bytes),
+            peer_keys_combined_hash + SHA512_DIGEST_LENGTH);
+
+
+    if(!mutka_openssl_MLDSA87_verify(
+                signature_context,
+                peer_signature,
+                self_sign_verify_key,
+                peer_keys_combined_hash,
+                sizeof(peer_keys_combined_hash))) {
+        mutka_set_errmsg("%s: Failed to verify signature.", __func__);
+        goto out;
+    }
+
+
+    key128bit_t x25519_shared_secret;
+    key128bit_t mlkem_shared_secret;
+
+
+    if(!mutka_openssl_derive_shared_secret(
+                &x25519_shared_secret,
+                &self_keys->x25519_privkey,
+                peer_x25519_publkey)) {
+        mutka_set_errmsg("%s: Failed to derive shared X25519 secret.", __func__);
+        goto out;
+    }
+
+    if(!mutka_openssl_decaps(
+                &mlkem_shared_secret,
+                peer_mlkem_cipher,
+                &self_keys->mlkem_privkey)) {
+        mutka_set_errmsg("%s: Failed to decapsulate ML-KEM-1024 key.", __func__);
+        goto out;
+    }
+
+
+    // Combine X25519 and ML-KEM-1024 shared keys
+    // and pass that through HKDF to get hybrid shared key.
+
+    uint8_t hybrid_shared_secret
+        [sizeof(x25519_shared_secret.bytes) + sizeof(mlkem_shared_secret.bytes)] = { 0 };
+
+    memcpy(hybrid_shared_secret,
+            x25519_shared_secret.bytes,
+            sizeof(x25519_shared_secret.bytes));
+
+    memcpy(hybrid_shared_secret + sizeof(x25519_shared_secret.bytes),
+            mlkem_shared_secret.bytes,
+            sizeof(mlkem_shared_secret.bytes));
+
+
+    if(!mutka_openssl_HKDF(
+                hybrid_key_out,
+                hybrid_shared_secret,
+                sizeof(hybrid_shared_secret),
+                hkdf_salt,
+                hkdf_info)) {
+        mutka_set_errmsg("%s: Failed to derive shared hybrid key.", __func__);
+        goto out;
+    }
+
+    result = true;
+
+out:
+    return result;
+}
+
+
+bool mutka_hybrid_kem_encaps
+(
+    key128bit_t*              hybrid_key_out,
+    key_mlkem1024_cipher_t*   mlkem_cipher_out,
+    struct mutka_cipher_keys* self_keys,
+    key128bit_t*              peer_x25519_publkey,
+    key_mlkem1024_publ_t*     peer_mlkem_publkey,
+    uint8_t*                  hkdf_salt,
+    const char*               hkdf_info
+){
+    bool result = false;
+
+    key128bit_t x25519_shared_secret;
+    key128bit_t mlkem_shared_secret;
+
+
+    if(!mutka_openssl_derive_shared_secret(
+                &x25519_shared_secret,
+                &self_keys->x25519_privkey,
+                peer_x25519_publkey)) {
+        mutka_set_errmsg("%s: Failed to derive shared X25519 key.", __func__);
+        goto out;
+    }
+
+    if(!mutka_openssl_encaps(
+                mlkem_cipher_out,
+                &mlkem_shared_secret,
+                peer_mlkem_publkey
+                )) {
+        mutka_set_errmsg("%s: Failed to encapsulate ML-KEM-1024 key.", __func__);
+        goto out;
+    }
+
+    // Combine X25519 and ML-KEM-1024 shared keys
+    // and pass that through HKDF to get hybrid shared key.
+
+
+    uint8_t hybrid_shared_secret
+        [sizeof(x25519_shared_secret.bytes) + sizeof(mlkem_shared_secret.bytes)] = { 0 };
+
+    memcpy(hybrid_shared_secret,
+            x25519_shared_secret.bytes,
+            sizeof(x25519_shared_secret.bytes));
+
+    memcpy(hybrid_shared_secret + sizeof(x25519_shared_secret.bytes),
+            mlkem_shared_secret.bytes,
+            sizeof(mlkem_shared_secret.bytes));
+
+
+    if(!mutka_openssl_HKDF(
+                hybrid_key_out,
+                hybrid_shared_secret,
+                sizeof(hybrid_shared_secret),
+                hkdf_salt,
+                hkdf_info)) {
+        mutka_set_errmsg("%s: Failed to derive shared hybrid key.", __func__);
+        goto out;
+    }
+
+
+
+    result = true;
+
+out:
+    return result;
+}
