@@ -39,9 +39,7 @@ struct mutka_cipher_keys {
 
 bool mutka_generate_cipher_keys(struct mutka_cipher_keys* keys);
 
-// Get shared hybrid key from self cipher keys and peer's public keys.
-// This function will return 'true' if everything went well and signature was verified.
-// Otherwise 'false' is returned.
+
 bool mutka_hybrid_kem_decaps
 (
     key128bit_t*              hybrid_key_out,
@@ -54,7 +52,6 @@ bool mutka_hybrid_kem_decaps
     uint8_t*                  hkdf_salt,
     const char*               hkdf_info
 );
-
 
 bool mutka_hybrid_kem_encaps
 (

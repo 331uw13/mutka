@@ -53,7 +53,7 @@ struct mutka_server {
     key_mldsa87_publ_t      host_mldsa87_publkey;
 
     struct mutka_client*    clients;
-    uint32_t                num_clients;
+    uint8_t                num_clients;
     
     int*                    client_disconnect_queue; // Client uids who disconnected.
     uint32_t                num_clients_disconnecting;

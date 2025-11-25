@@ -107,13 +107,21 @@ enum mutka_packet_ids : int {
     // required for the sender to encrypt messages for each receiver.
     MPACKET_GET_PEER_PUBLKEYS,
 
+    // After client has got all other client's public keys.
+    // Server sends this packet to inform there is no more at the moment.
+    MPACKET_ALL_PEER_PUBLKEYS_SENT,
+
     // Client can send encrypted messages with this packet
     // after they received all peers public message keys.
     MPACKET_SEND_MSG,
 
     // Server sends this packet when it received MPACKET_SEND_MSG
-    // and sent it to receiver.
+    MPACKET_SERVER_MSG_ACK,
+
+    // Clients can receive their encrypted 
+    // messages with this packet id.
     MPACKET_MSG_RECV,
+
 
 
     MPACKET_TEST,
@@ -139,6 +147,13 @@ bool mutka_rpacket_add_ent
     uint8_t encoding_option
 );
 
+// Can be used for forwarding packets with different packet ids.
+// After this function 'inpacket->raw_packet'(containing new_packet_id) can be sent.
+void mutka_replace_inpacket_id
+(
+    struct mutka_packet* inpacket,
+    int new_packet_id
+);
 
 // This function will encrypt packet data before its sent.
 void mutka_send_encrypted_rpacket

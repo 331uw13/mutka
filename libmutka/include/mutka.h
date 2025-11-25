@@ -3,6 +3,7 @@
 
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "server.h"
 #include "fileio.h"
@@ -33,6 +34,7 @@ size_t mutka_get_decoded_buffer_len(size_t encoded_len);
 
 void mutka_encode(struct mutka_str* str, uint8_t* bytes, size_t size);
 bool mutka_decode(uint8_t* buf, size_t buf_memsize, char* encoded, size_t size);
+
 
 
 #endif

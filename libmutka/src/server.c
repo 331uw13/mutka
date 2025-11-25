@@ -294,7 +294,7 @@ void mutka_server_remove_client
 
     int remove_index = -1;
 
-    for(uint32_t i = 0; i < server->num_clients; i++) {
+    for(uint8_t i = 0; i < server->num_clients; i++) {
         if(server->clients[i].uid == client_uid) {
             remove_index = i;
             break;
@@ -305,7 +305,7 @@ void mutka_server_remove_client
         mutka_disconnect(&server->clients[remove_index]);
 
         // Shift remaining clients from right to left.
-        for(uint32_t i = remove_index; i < server->num_clients-1; i++) {
+        for(uint8_t i = remove_index; i < server->num_clients-1; i++) {
             server->clients[i] = server->clients[i+1];
         }
         server->num_clients--;
@@ -614,7 +614,7 @@ static bool p_client_has_confirmed_captcha
     return (client->flags & MUTKA_SCFLG_CAPTCHA_COMPLETE);
 }
 
-// Is client fully verified? Can they send messages.
+// Is client fully verified? Should they be able to send messages?
 static bool p_client_verified
 (
     struct mutka_server* server,
@@ -651,7 +651,50 @@ static void send_test_packet(struct mutka_server* server, struct mutka_client* c
             &client->mtdata_keys.hshared_key);
 }
 
+static struct mutka_client* p_mutka_server_get_client_next_receiver
+(
+    struct mutka_server* server,
+    struct mutka_client* client,
+    bool* is_last_peer
+){
+    struct mutka_client* receiver = NULL;
 
+    if(client->send_peerinfo_index >= server->num_clients) {    
+        client->send_peerinfo_index = 0;
+        goto out;
+    }
+
+    *is_last_peer = (client->send_peerinfo_index+1 >= server->num_clients);
+    receiver = &server->clients[client->send_peerinfo_index];
+
+    client->send_peerinfo_index++;
+
+out:
+    return receiver;
+}
+
+static void p_mutka_server_nomore_peer_msgkeys
+(
+    struct mutka_server* server,
+    struct mutka_client* client
+){
+    client->send_peerinfo_index = 0;
+    server->flags &= ~MUTKA_SFLG_SENDING_CLIENT_MSGPUBLKEYS;
+    mutka_rpacket_prep(
+            &server->out_raw_packet, 
+            MPACKET_ALL_PEER_PUBLKEYS_SENT);
+    mutka_send_encrypted_rpacket(
+            client->socket_fd,
+            &server->out_raw_packet,
+            &client->mtdata_keys.hshared_key);
+
+    // -------------------------------------------------------
+    // "~MUTKA_SFLG_SENDING_CLIENT_MSGPUBLKEYS"
+    // ... Ok cool but what about if the client dont respond.
+    //     All disconnects will hang.
+    // FIXME ^^^
+    // -------------------------------------------------------
+}
 
 void mutka_server_handle_packet
 (
@@ -662,39 +705,113 @@ void mutka_server_handle_packet
 
     switch(server->inpacket.id) {
 
-        case MPACKET_GET_PEER_PUBLKEYS:
+        case MPACKET_SEND_MSG:
             if(!p_client_verified(server, client)) {
                 return;
             }
-            if(!(client->flags & MUTKA_SCFLG_HAS_MSGKEYS)) {
-                // Dont allow clients who have not sent their msg public keys  
-                // to get other client's msg public keys.
+            if(server->inpacket.num_elements != 9) {
                 return;
             }
             {
-                memset(server->tmp_peer_info, 0, 
-                        server->tmp_peer_info_len > 
-                        MUTKA_TMPPEERINFO_MAX ? MUTKA_TMPPEERINFO_MAX : server->tmp_peer_info_len);
-                server->tmp_peer_info_len = 0;
+                // TODO: This could be improved in the future.
 
-                
-                if(client->send_peerinfo_index >= server->config.max_clients) {
+                struct mutka_packet_elem* receiver_uid_elem = &server->inpacket.elements[0];
+
+                int receiver_uid = -1;
+                if(!mutka_decode(
+                            (uint8_t*)&receiver_uid,
+                            sizeof(receiver_uid),
+                            receiver_uid_elem->data.bytes,
+                            receiver_uid_elem->data.size)) {
+                    mutka_set_errmsg("MPACKET_SEND_MSG: Failed to decode receiver uid.");
+                    return;
+                }
+
+                struct mutka_client* receiver = NULL;
+                for(uint8_t i = 0; i < server->num_clients; i++) {
+                    if(server->clients[i].uid == receiver_uid) {
+                        receiver= &server->clients[i];
+                        break;
+                    }
+                }
+                if(!receiver) {
+                    mutka_set_errmsg("MPACKET_SEND_MSG: "
+                            "Failed to find receiver(%i) for encrypted message.", receiver_uid);
                     return;
                 }
 
 
+                if(!p_client_verified(server, receiver)) {
+                    mutka_set_errmsg("MPACKET_SEND_MSG: "
+                            "Receiver is not verified, cant continue.");
+                    return;
+                }
+
+
+                // "Forward" packet to receiver with different packet id.
+                mutka_replace_inpacket_id(&server->inpacket, MPACKET_MSG_RECV);
+                mutka_send_encrypted_rpacket(
+                        receiver->socket_fd,
+                        &server->inpacket.raw_packet,
+                        &receiver->mtdata_keys.hshared_key);
+
+
+                // Tell message sender we "forwarded" the message.
+                mutka_rpacket_prep(&server->out_raw_packet, MPACKET_SERVER_MSG_ACK);
+                mutka_send_encrypted_rpacket(
+                        client->socket_fd,
+                        &server->out_raw_packet,
+                        &client->mtdata_keys.hshared_key);
+
+                printf("MPACKET_SEND_MSG: Receiver: %i\n", receiver_uid);
+            }
+            return;
+
+        case MPACKET_GET_PEER_PUBLKEYS:
+            if(!p_client_verified(server, client)) {
+                return;
+            }
+            {
+                /*
+                memset(server->tmp_peer_info, 0, 
+                        server->tmp_peer_info_len > 
+                        MUTKA_TMPPEERINFO_MAX ? MUTKA_TMPPEERINFO_MAX : server->tmp_peer_info_len);
+                server->tmp_peer_info_len = 0;
+                */
+                
+
                 server->flags |= MUTKA_SFLG_SENDING_CLIENT_MSGPUBLKEYS;
-                bool is_last_peer = (client->send_peerinfo_index+1 >= server->num_clients);
-               
-                struct mutka_client* peer = &server->clients[client->send_peerinfo_index];
+                //bool is_last_peer = (client->send_peerinfo_index+1 >= server->num_clients);
+              
+                bool is_last_peer = false;
+                struct mutka_client* peer 
+                    = p_mutka_server_get_client_next_receiver(server, client, &is_last_peer);
+                if(!peer) {
+                    p_mutka_server_nomore_peer_msgkeys(server, client);
+                    return;
+                }
+
+
+                // The client who asked other keys from the server
+                // will not want to include their own.
+                if(peer->uid == client->uid) {
+                    if(is_last_peer) {
+                        p_mutka_server_nomore_peer_msgkeys(server, client);
+                        return;
+                    }
+                    peer = p_mutka_server_get_client_next_receiver(server, client, &is_last_peer);
+                    if(!peer) {
+                        return;
+                    }
+                }
+                
                 mutka_rpacket_prep(&server->out_raw_packet, MPACKET_GET_PEER_PUBLKEYS);
 
-                //printf("%i peerinfo_index = %i\n", client->uid, client->send_peerinfo_index);
-
+               
                 mutka_rpacket_add_ent(&server->out_raw_packet,
-                        "ask_next",
-                        &is_last_peer,
-                        sizeof(is_last_peer),
+                        "receiver_uid",
+                        &peer->uid,
+                        sizeof(peer->uid),
                         RPACKET_ENCODE);
 
                 mutka_rpacket_add_ent(&server->out_raw_packet,
@@ -726,7 +843,7 @@ void mutka_server_handle_packet
                         &server->out_raw_packet,
                         &client->mtdata_keys.hshared_key);
 
-
+                /*
                 client->send_peerinfo_index++;
                 if(client->send_peerinfo_index >= server->num_clients) {
                     client->send_peerinfo_index = 0;
@@ -737,6 +854,7 @@ void mutka_server_handle_packet
                     //     All disconnects will hang.
                     // FIXME ^^^
                 }
+                */
             }
             return;
 

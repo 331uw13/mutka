@@ -14,13 +14,15 @@
 
 #define RPACKET_HEADER_SIZE (sizeof(int)*2)
 
-//#define DEBUG
+#define DEBUG
+#define DEBUG_HEAD_N 100
 
 #ifdef DEBUG
 static void p_dump_packet(struct mutka_raw_packet* packet, const char* label) {
     printf("\033[90m===[ %s ]=======\033[0m\n", label);
     int column_count = 0;
 
+    int byte_count = 0;
     char* ch = &packet->data[0];
     while(ch < packet->data + packet->size) {
 
@@ -32,6 +34,12 @@ static void p_dump_packet(struct mutka_raw_packet* packet, const char* label) {
             column_count = 0;
         }
         ch++;
+        byte_count++;
+        if(byte_count > DEBUG_HEAD_N) {
+            printf("...\n");
+            column_count = 0;
+            break;
+        }
     }
     if(column_count > 0) {
         printf("\n");
@@ -617,5 +625,32 @@ int mutka_recv_incoming_packet(struct mutka_packet* packet, int socket_fd) {
     return M_NEW_PACKET_AVAIL;
 }
 
+void mutka_replace_inpacket_id
+(
+    struct mutka_packet* inpacket,
+    int new_packet_id
+){
 
+    if(!inpacket->raw_packet.data) {
+        return;
+    }
+
+    if(inpacket->raw_packet.size < sizeof(new_packet_id)) {
+        return;
+    }
+
+
+    // The inpacket->raw_packet contains expected size at beginning of data.
+    // It must be removed first.
+
+    memmove(inpacket->raw_packet.data,
+            inpacket->raw_packet.data + sizeof(int),
+            inpacket->raw_packet.size - sizeof(int));
+    inpacket->raw_packet.size -= sizeof(int);
+
+
+    memcpy(inpacket->raw_packet.data,
+            &new_packet_id,
+            sizeof(new_packet_id));
+}
 

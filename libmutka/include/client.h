@@ -189,7 +189,7 @@ struct mutka_client* mutka_connect(struct mutka_client_cfg* config, char* host, 
 void mutka_init_metadata_key_exchange(struct mutka_client* client);
 void mutka_send_captcha_answer(struct mutka_client* client, char* answer, size_t answer_len);
 
-void mutka_gen_new_msgkeys(struct mutka_client* client);
+void mutka_deposit_new_msgkeys(struct mutka_client* client);
 void mutka_send_message(struct mutka_client* client, char* message, size_t message_len);
 
 // This function behaves little bit differently depending on the
