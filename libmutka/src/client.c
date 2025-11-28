@@ -1298,7 +1298,7 @@ void mutka_client_handle_packet(struct mutka_client* client) {
                     return;
                 }
 
-                struct P_MSG_RECV_struct* packet = &packet_data.P_MSG_RECV;
+                struct STOC_NEW_MSG_CIPHER_struct* packet = &packet_data.STOC_NEW_MSG_CIPHER;
 
                 // Verify the message and keys.
                 

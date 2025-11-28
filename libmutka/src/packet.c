@@ -223,9 +223,7 @@ void mutka_send_clear_rpacket(int socket_fd, struct mutka_raw_packet* packet) {
 
 // Allocate more space for packet 'elements' if needed.
 static int p_mutka_packet_memcheck(struct mutka_packet* packet) { 
-    bool result = false;
     size_t old_num_elems_alloc = packet->num_elems_allocated;
-
     
     if(packet->num_elements+1 >= packet->num_elems_allocated) {
         packet->elements = mutka_srealloc_array(
@@ -235,7 +233,7 @@ static int p_mutka_packet_memcheck(struct mutka_packet* packet) {
                 packet->num_elems_allocated + 1);
 
         if(old_num_elems_alloc >= packet->num_elems_allocated) {
-            mutka_set_errmsg("Packet parser experienced unexpected memory error :(");
+            mutka_set_errmsg("Packet parser experienced unexpected memory error.");
             return MEMCHECK_ERROR;
         }
 
@@ -713,7 +711,15 @@ bool mutka_validate_parsed_packet(struct mpacket_data* packet_struct, struct mut
             }
             {
                 struct mutka_packet_elem* host_publkey_elem = &inpacket->elements[0];
+
                 struct STOC_HOST_PUBLKEY_struct* out_p = &packet_struct->STOC_HOST_PUBLKEY;
+
+
+                if(host_publkey_elem->data.size != sizeof(out_p->host_publkey.bytes)) {
+                    mutka_set_errmsg("%s: %s: Unexpected host public key length.", 
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
 
                 const float host_publkey_entropy = mutka_compute_key_entropy((uint8_t*)
                             host_publkey_elem->data.bytes,
@@ -725,11 +731,6 @@ bool mutka_validate_parsed_packet(struct mpacket_data* packet_struct, struct mut
                     return false;
                 }
 
-                if(host_publkey_elem->data.size != sizeof(out_p->host_publkey.bytes)) {
-                    mutka_set_errmsg("%s: %s: Unexpected host public key length.", 
-                            __func__, mutka_get_packet_name(inpacket->id));
-                    return false;
-                }
 
                 memcpy(out_p->host_publkey.bytes,
                         host_publkey_elem->data.bytes,
@@ -750,6 +751,7 @@ bool mutka_validate_parsed_packet(struct mpacket_data* packet_struct, struct mut
                 struct mutka_packet_elem* mlkem_publkey_elem       = &inpacket->elements[2];
                 struct mutka_packet_elem* x25519_publkey_elem      = &inpacket->elements[3];
                 struct mutka_packet_elem* signature_elem           = &inpacket->elements[4];
+                
                 struct STOC_PEER_PUBLKEYS_struct* out_p = &packet_struct->STOC_PEER_PUBLKEYS;
  
 
@@ -839,7 +841,9 @@ bool mutka_validate_parsed_packet(struct mpacket_data* packet_struct, struct mut
                 struct mutka_packet_elem* mlkem_cipher_elem    = &inpacket->elements[1];
                 struct mutka_packet_elem* signature_elem       = &inpacket->elements[2];
                 struct mutka_packet_elem* hkdf_salt_elem       = &inpacket->elements[3];
+                
                 struct STOC_EXCH_METADATA_KEYS_struct* out_p = &packet_struct->STOC_EXCH_METADATA_KEYS;
+
 
                 if(x25519_publkey_elem->data.size != sizeof(out_p->peer_x25519_publkey.bytes)) {
                      mutka_set_errmsg("%s: %s: Unexpected peer X25519 public key length.",
@@ -910,15 +914,17 @@ bool mutka_validate_parsed_packet(struct mpacket_data* packet_struct, struct mut
             {
                 struct mutka_packet_elem* x25519_publkey_elem  = &inpacket->elements[0];
                 struct mutka_packet_elem* mlkem_publkey_elem    = &inpacket->elements[1];
+                
                 struct CTOS_EXCH_METADATA_KEYS_struct* out_p = &packet_struct->CTOS_EXCH_METADATA_KEYS;
 
+
                 if(x25519_publkey_elem->data.size != sizeof(out_p->peer_x25519_publkey.bytes)) {
-                     mutka_set_errmsg("%s: %s: Unexpected peer X25519 public key length.",
+                    mutka_set_errmsg("%s: %s: Unexpected peer X25519 public key length.",
                             __func__, mutka_get_packet_name(inpacket->id));
                     return false;
                 }
                 if(mlkem_publkey_elem->data.size != sizeof(out_p->peer_mlkem_publkey.bytes)) {
-                     mutka_set_errmsg("%s: %s: Unexpected peer ML-KEM-1024 public key length.",
+                    mutka_set_errmsg("%s: %s: Unexpected peer ML-KEM-1024 public key length.",
                             __func__, mutka_get_packet_name(inpacket->id));
                     return false;
                 }
@@ -965,34 +971,207 @@ bool mutka_validate_parsed_packet(struct mpacket_data* packet_struct, struct mut
                 struct mutka_packet_elem* x25519_publkey_elem   = &inpacket->elements[1];
                 struct mutka_packet_elem* mlkem_publkey_elem    = &inpacket->elements[2];
                 struct mutka_packet_elem* signature_elem        = &inpacket->elements[3];
+                
                 struct CTOS_DEPOSIT_PUBLIC_MSGKEYS_struct* out_p = &packet_struct->CTOS_DEPOSIT_PUBLIC_MSGKEYS;
 
 
                 if(identity_publkey_elem->data.size != sizeof(out_p->identity_publkey.bytes)) {
-                    mutka_set_errmsg("%s: %s: Unexpected peer identity public key length.",
+                    mutka_set_errmsg("%s: %s: Unexpected Identity public key length.",
                             __func__, mutka_get_packet_name(inpacket->id));
                     return false;
                 }
                 if(x25519_publkey_elem->data.size != sizeof(out_p->x25519_publkey.bytes)) {
-                     mutka_set_errmsg("%s: %s: Unexpected peer X25519 public key length.",
+                     mutka_set_errmsg("%s: %s: Unexpected X25519 public key length.",
                             __func__, mutka_get_packet_name(inpacket->id));
                     return false;
                 }
                 if(mlkem_publkey_elem->data.size != sizeof(out_p->mlkem_publkey.bytes)) {
-                     mutka_set_errmsg("%s: %s: Unexpected peer ML-KEM-1024 public key length.",
+                     mutka_set_errmsg("%s: %s: Unexpected ML-KEM-1024 public key length.",
                             __func__, mutka_get_packet_name(inpacket->id));
                     return false;
                 }
+                if(signature_elem->data.size != sizeof(out_p->signature.bytes)) {
+                     mutka_set_errmsg("%s: %s: Unexpected signature length.",
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
+
+
+                const float identity_publkey_entropy = mutka_compute_key_entropy((uint8_t*)
+                            identity_publkey_elem->data.bytes,
+                            identity_publkey_elem->data.size);
 
                 const float x25519_publkey_entropy = mutka_compute_key_entropy((uint8_t*)
                             x25519_publkey_elem->data.bytes,
                             x25519_publkey_elem->data.size);
 
+                const float mlkem_publkey_entropy = mutka_compute_key_entropy((uint8_t*)
+                            mlkem_publkey_elem->data.bytes,
+                            mlkem_publkey_elem->data.size);
+
+                if(identity_publkey_entropy < MLDSA87_ENTROPY_BIAS) {
+                    mutka_set_errmsg("%s: %s: Identity public key has too low entropy.",
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
+
+                if(x25519_publkey_entropy < X25519_ENTROPY_BIAS) {
+                    mutka_set_errmsg("%s: %s: X25519 public key has too low entropy.",
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
+
+                if(mlkem_publkey_entropy < MLKEM1024_ENTROPY_BIAS) {
+                    mutka_set_errmsg("%s: %s: ML-KEM-1024 public key has too low entropy.",
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
+
+                memcpy(out_p->identity_publkey.bytes,
+                        identity_publkey_elem->data.bytes,
+                        identity_publkey_elem->data.size);
+
+                memcpy(out_p->x25519_publkey.bytes,
+                        x25519_publkey_elem->data.bytes,
+                        x25519_publkey_elem->data.size);
+
+                memcpy(out_p->mlkem_publkey.bytes,
+                        mlkem_publkey_elem->data.bytes,
+                        mlkem_publkey_elem->data.size);
+
+                memcpy(out_p->signature.bytes,
+                        signature_elem->data.bytes,
+                        signature_elem->data.size);
+            }
+            break;
 
 
+        case CTOS_MPACKET_SEND_MSG_CIPHER:
+            if(inpacket->num_elements != 10) {
+                mutka_set_errmsg("%s: %s: Invalid number of elements.", 
+                        __func__, mutka_get_packet_name(inpacket->id));
+                return false;
+            }
+            {
+                struct mutka_packet_elem* receiver_uid_elem      = &inpacket->elements[0];
+                struct mutka_packet_elem* msg_cipher_elem        = &inpacket->elements[1];
+                struct mutka_packet_elem* gcm_aad_elem           = &inpacket->elements[2];
+                struct mutka_packet_elem* gcm_iv_elem            = &inpacket->elements[3];
+                struct mutka_packet_elem* gcm_tag_elem           = &inpacket->elements[4];
+                struct mutka_packet_elem* hkdf_salt_elem         = &inpacket->elements[5];
+                struct mutka_packet_elem* identity_publkey_elem  = &inpacket->elements[6];
+                struct mutka_packet_elem* x25519_publkey_elem    = &inpacket->elements[7];
+                struct mutka_packet_elem* mlkem_cipher_elem      = &inpacket->elements[8];
+                struct mutka_packet_elem* signature_elem         = &inpacket->elements[9];
+
+                struct CTOS_SEND_MSG_CIPHER_struct* out_p = &packet_struct->CTOS_SEND_MSG_CIPHER;
+
+                // NOTE: Message cipher and gcm_aad length dont matter.
+
+                if(receiver_uid_elem->data.size != sizeof(out_p->receiver_uid)) {
+                    mutka_set_errmsg("%s: %s: Unexpected receiver uid length.",
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
+                if(gcm_iv_elem->data.size != sizeof(out_p->gcm_iv)) {
+                    mutka_set_errmsg("%s: %s: Unexpected GCM IV length.",
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
+                if(gcm_tag_elem->data.size != sizeof(out_p->gcm_tag)) {
+                    mutka_set_errmsg("%s: %s: Unexpected GCM TAG length.",
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
+                if(hkdf_salt_elem->data.size != sizeof(out_p->hkdf_salt)) {
+                    mutka_set_errmsg("%s: %s: Unexpected HKDF salt length.",
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
+                if(identity_publkey_elem->data.size != sizeof(out_p->identity_publkey.bytes)) {
+                    mutka_set_errmsg("%s: %s: Unexpected identity public key length.",
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
+                if(x25519_publkey_elem->data.size != sizeof(out_p->x25519_publkey.bytes)) {
+                    mutka_set_errmsg("%s: %s: Unexpected X25519 public key length.",
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
+                if(mlkem_cipher_elem->data.size != sizeof(out_p->mlkem_cipher.bytes)) {
+                    mutka_set_errmsg("%s: %s: Unexpected ML-KEM-1024 cipher key length.",
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
+                if(signature_elem->data.size != sizeof(out_p->signature.bytes)) {
+                    mutka_set_errmsg("%s: %s: Unexpected signature length.",
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
+
+
+                const float identity_publkey_entropy = mutka_compute_key_entropy((uint8_t*)
+                            identity_publkey_elem->data.bytes,
+                            identity_publkey_elem->data.size);
+
+                const float x25519_publkey_entropy = mutka_compute_key_entropy((uint8_t*)
+                            x25519_publkey_elem->data.bytes,
+                            x25519_publkey_elem->data.size);
+
+                const float mlkem_cipher_entropy = mutka_compute_key_entropy((uint8_t*)
+                            mlkem_cipher_elem->data.bytes,
+                            mlkem_cipher_elem->data.size);
+
+                if(identity_publkey_entropy < MLDSA87_ENTROPY_BIAS) {
+                    mutka_set_errmsg("%s: %s: Identity public key has too low entropy.",
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
+                if(x25519_publkey_entropy < X25519_ENTROPY_BIAS) {
+                    mutka_set_errmsg("%s: %s: X25519 public key has too low entropy.",
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
+                if(mlkem_cipher_entropy < MLKEM1024_ENTROPY_BIAS) {
+                    mutka_set_errmsg("%s: %s: ML-KEM-1024 cipher has too low entropy.",
+                            __func__, mutka_get_packet_name(inpacket->id));
+                    return false;
+                }
+
+
+                memcpy(&out_p->receiver_uid,
+                        receiver_uid_elem->data.bytes,
+                        receiver_uid_elem->data.size);
+
+                // TODO: Set msg cipher, gcm_aad...
                 
+                memcpy(out_p->gcm_iv,
+                        gcm_iv_elem->data.bytes,
+                        gcm_iv_elem->data.size);
+            
+                memcpy(out_p->gcm_tag,
+                        gcm_tag_elem->data.bytes,
+                        gcm_tag_elem->data.size);
 
+                memcpy(out_p->hkdf_salt,
+                        hkdf_salt_elem->data.bytes,
+                        hkdf_salt_elem->data.size);
 
+                memcpy(out_p->identity_publkey.bytes,
+                        identity_publkey_elem->data.bytes,
+                        identity_publkey_elem->data.size);
+
+                memcpy(out_p->x25519_publkey.bytes,
+                        x25519_publkey_elem->data.bytes,
+                        x25519_publkey_elem->data.size);
+
+                memcpy(out_p->mlkem_cipher.bytes,
+                        mlkem_cipher_elem->data.bytes,
+                        mlkem_cipher_elem->data.size);
+
+                memcpy(out_p->signature.bytes,
+                        signature_elem->data.bytes,
+                        signature_elem->data.size);
             }
             break;
 

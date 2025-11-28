@@ -150,11 +150,58 @@ struct mpacket_data {
     int packet_id;
     union {
 
-        // STOC_ prefix means Server To Client.
-        // CTOS_ prefix means Client To Server.
-        // P_ prefix means the packet is same for both.
+        struct STOC_PEER_PUBLKEYS_struct
+        {
+            int                  peer_uid;
+            key_mldsa87_publ_t   identity_publkey;
+            key_mlkem1024_publ_t mlkem_publkey;
+            key128bit_t          x25519_publkey;
+            signature_mldsa87_t  signature;
+        }
+        STOC_PEER_PUBLKEYS;
+        
+        // ------------------------------------------
 
-        struct P_MSG_RECV_struct
+        struct STOC_HOST_PUBLKEY_struct
+        {
+            key_mldsa87_publ_t host_publkey;
+        }
+        STOC_HOST_PUBLKEY;
+
+        // ------------------------------------------
+
+        struct STOC_EXCH_METADATA_KEYS_struct
+        {
+            key128bit_t             peer_x25519_publkey;
+            key_mlkem1024_cipher_t  peer_mlkem_cipher;
+            signature_mldsa87_t     signature;
+            uint8_t                 hkdf_salt [HKDF_SALT_LEN];
+        }
+        STOC_EXCH_METADATA_KEYS;
+
+        // ------------------------------------------
+
+        struct CTOS_EXCH_METADATA_KEYS_struct
+        {
+            key128bit_t             peer_x25519_publkey;
+            key_mlkem1024_publ_t    peer_mlkem_publkey;
+        }
+        CTOS_EXCH_METADATA_KEYS;
+
+        // ------------------------------------------
+
+        struct CTOS_DEPOSIT_PUBLIC_MSGKEYS_struct
+        {
+            key_mldsa87_publ_t     identity_publkey;
+            key128bit_t            x25519_publkey;
+            key_mlkem1024_publ_t   mlkem_publkey;
+            signature_mldsa87_t    signature;
+        }
+        CTOS_DEPOSIT_PUBLIC_MSGKEYS;
+
+        // ------------------------------------------
+
+        struct CTOS_SEND_MSG_CIPHER_struct
         {
             int              receiver_uid;
             struct mutka_str msg_cipher;
@@ -168,54 +215,26 @@ struct mpacket_data {
             key_mlkem1024_cipher_t  mlkem_cipher;
             signature_mldsa87_t     signature;
         }
-        P_MSG_RECV;
+        CTOS_SEND_MSG_CIPHER;
+    
+        // ------------------------------------------
 
-
-        struct STOC_PEER_PUBLKEYS_struct
+        struct STOC_NEW_MSG_CIPHER_struct
         {
-            int                  peer_uid;
-            key_mldsa87_publ_t   identity_publkey;
-            key_mlkem1024_publ_t mlkem_publkey;
-            key128bit_t          x25519_publkey;
-            signature_mldsa87_t  signature;
-        }
-        STOC_PEER_PUBLKEYS;
-
-
-        struct STOC_HOST_PUBLKEY_struct
-        {
-            key_mldsa87_publ_t host_publkey;
-        }
-        STOC_HOST_PUBLKEY;
-
-
-        struct STOC_EXCH_METADATA_KEYS_struct
-        {
-            key128bit_t             peer_x25519_publkey;
-            key_mlkem1024_cipher_t  peer_mlkem_cipher;
+            int              receiver_uid;
+            struct mutka_str msg_cipher;
+            struct mutka_str gcm_aad;
+            uint8_t          gcm_iv  [AESGCM_IV_LEN];
+            uint8_t          gcm_tag [AESGCM_TAG_LEN];
+            uint8_t          hkdf_salt [HKDF_SALT_LEN];
+            
+            key_mldsa87_publ_t      identity_publkey;
+            key128bit_t             x25519_publkey;
+            key_mlkem1024_cipher_t  mlkem_cipher;
             signature_mldsa87_t     signature;
-            uint8_t                 hkdf_salt [HKDF_SALT_LEN];
         }
-        STOC_EXCH_METADATA_KEYS;
-
-
-        struct CTOS_EXCH_METADATA_KEYS_struct
-        {
-            key128bit_t             peer_x25519_publkey;
-            key_mlkem1024_publ_t    peer_mlkem_publkey;
-        }
-        CTOS_EXCH_METADATA_KEYS;
-
-
-        struct CTOS_DEPOSIT_PUBLIC_MSGKEYS_struct
-        {
-            key_mldsa87_publ_t     identity_publkey;
-            key128bit_t            x25519_publkey;
-            key_mlkem1024_publ_t   mlkem_publkey;
-            signature_mldsa87_t    signature;
-        }
-        CTOS_DEPOSIT_PUBLIC_MSGKEYS;
-
+        STOC_NEW_MSG_CIPHER;
+    
     };
 };
 
@@ -277,7 +296,8 @@ void mutka_send_encrypted_rpacket
 );
 
 // IMPORTANT NOTE: 
-// mutka_send_clear_rpacket() should only be used for initial packets (metadata key exchange)
+// mutka_send_clear_rpacket() should
+// only be used for initial sequence packets
 // THIS FUNCTION DOES NOT ENCRYPT ANYTHING.
 void mutka_send_clear_rpacket(int socket_fd, struct mutka_raw_packet* packet);
 
