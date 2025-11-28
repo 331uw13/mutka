@@ -110,10 +110,10 @@ struct mutka_client_cfg {
 // Data needed for client to encrypt message for each peer.
 struct mutka_client_peer_msgkeys {
     int uid;
-    signature_mldsa87_t  signature;
     key_mldsa87_publ_t   identity_publkey;
     key_mlkem1024_publ_t mlkem_publkey;
     key128bit_t          x25519_publkey;
+    signature_mldsa87_t  signature;
 };
 
 

@@ -81,7 +81,7 @@ static bool mutka_openssl_keypair_ctx
         goto out;
     }
 
-    printf("%s: publ = %li, priv = %li\n", caller_func, public_keylen, private_keylen);
+    //printf("%s: publ = %li, priv = %li\n", caller_func, public_keylen, private_keylen);
 
     if(private_keylen != privkey_expected_len) {
         mutka_set_errmsg("%s (called from: %s): Unexpected private key length.",
@@ -895,13 +895,13 @@ bool mutka_hybrid_kem_decaps
 (
     key128bit_t*              hybrid_key_out,
     struct mutka_cipher_keys* self_keys,
-    key_mldsa87_publ_t*       self_sign_verify_key,
     key128bit_t*              peer_x25519_publkey,
     key_mlkem1024_cipher_t*   peer_mlkem_cipher,
-    signature_mldsa87_t*      peer_signature,
-    const char*               signature_context,
     uint8_t*                  hkdf_salt,
-    const char*               hkdf_info
+    const char*               hkdf_info,
+    key_mldsa87_publ_t*       self_sign_verify_key,
+    signature_mldsa87_t*      peer_signature,
+    const char*               signature_context
 ){
     bool result = false;
 
@@ -921,14 +921,18 @@ bool mutka_hybrid_kem_decaps
             peer_keys_combined_hash + SHA512_DIGEST_LENGTH);
 
 
-    if(!mutka_openssl_MLDSA87_verify(
-                signature_context,
-                peer_signature,
-                self_sign_verify_key,
-                peer_keys_combined_hash,
-                sizeof(peer_keys_combined_hash))) {
-        mutka_set_errmsg("%s: Failed to verify signature.", __func__);
-        goto out;
+    if(self_sign_verify_key
+    && peer_signature
+    && signature_context) {
+        if(!mutka_openssl_MLDSA87_verify(
+                    signature_context,
+                    peer_signature,
+                    self_sign_verify_key,
+                    peer_keys_combined_hash,
+                    sizeof(peer_keys_combined_hash))) {
+            mutka_set_errmsg("%s: Failed to verify signature.", __func__);
+            goto out;
+        }
     }
 
 

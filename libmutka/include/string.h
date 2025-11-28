@@ -41,6 +41,11 @@ void mutka_str_pop_end(struct mutka_str* str);
 // Append byte at end of string.
 bool mutka_str_append(struct mutka_str* str, char* data, uint32_t size);
 
+// Move str->bytes to destination.
+// If 'str->size' doesnt match 'dest_size' the operation is cancelled
+// and 'false' is returned. Otherwise 'true' if nothing went horribly wrong.
+bool mutka_strtoany(struct mutka_str* str, void* dest, size_t dest_size);
+
 
 // Miscellaneous utils.
 

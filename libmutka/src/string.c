@@ -137,6 +137,26 @@ bool mutka_str_append(struct mutka_str* str, char* data, uint32_t size) {
     return true;
 }
 
+bool mutka_strtoany(struct mutka_str* str, void* dest, size_t dest_size) {
+    if(!str->bytes) {
+        return false;
+    }
+    if(!dest) {
+        return false;
+    }
+    if(dest == str->bytes) {
+        return false;
+    }
+    if(dest_size != str->size) {
+        return false;
+    }
+
+    memset(dest, 0, dest_size);
+    memcpy(dest, str->bytes, dest_size);
+
+    return true;
+}
+
 ssize_t mutka_charptr_find(char* data, size_t data_size, char* part, size_t part_size) {
     ssize_t found_index = -1;
 
@@ -190,6 +210,7 @@ bool mutka_strcmp(char* A, size_t A_size, char* B, size_t B_size) {
 
     return true;
 }
+
 
 
 

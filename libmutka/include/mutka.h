@@ -7,6 +7,8 @@
 
 #include "server.h"
 #include "fileio.h"
+#include "cryptography.h"
+
 
 #define MUTKA_VERSION_STR "libmutka_version:[development]"
 #define MUTKA_VERSION_STR_LEN 30

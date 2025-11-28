@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <pthread.h>
+#include <math.h>
 
 #define MUTKA_CLIENT
 #include "../../../libmutka/include/mutka.h"
@@ -10,11 +11,117 @@
 
 
 
+
+
+
+
 void mutka_error(char* buffer, size_t size) {
     (void)size;
     printf("[libmutka error]: %s\n", buffer);
 }
 
+/*
+float analyze_key_entropy(uint8_t* array, int key_len);
+
+int main() {
+
+
+
+#define ITERATIONS 50000
+
+
+    float x25519_publ_avg_E = 0;
+    float x25519_priv_avg_E = 0;
+
+    float mlkem_publ_avg_E = 0;
+    float mlkem_priv_avg_E = 0;
+
+    float mldsa_publ_avg_E = 0;
+    float mldsa_priv_avg_E = 0;
+
+
+
+    for(int i = 0; i < ITERATIONS; i++) {
+    
+    key128bit_t private_x25519_key;
+    key128bit_t public_x25519_key;
+    mutka_openssl_X25519_keypair(&private_x25519_key, &public_x25519_key);
+
+    key_mlkem1024_priv_t private_mlkem_key;
+    key_mlkem1024_publ_t public_mlkem_key;
+    mutka_openssl_MLKEM1024_keypair(&private_mlkem_key, &public_mlkem_key);
+ 
+    key_mldsa87_priv_t private_mldsa_key;
+    key_mldsa87_publ_t public_mldsa_key;
+    mutka_openssl_MLDSA87_keypair(&private_mldsa_key, &public_mldsa_key);
+    
+
+    x25519_priv_avg_E += analyze_key_entropy(private_x25519_key.bytes, 32);
+    x25519_publ_avg_E += analyze_key_entropy(public_x25519_key.bytes, 32);
+
+    mlkem_priv_avg_E += analyze_key_entropy(private_mlkem_key.bytes, sizeof(private_mlkem_key.bytes));
+    mlkem_publ_avg_E += analyze_key_entropy(public_mlkem_key.bytes, sizeof(public_mlkem_key.bytes));
+
+    mldsa_priv_avg_E += analyze_key_entropy(private_mldsa_key.bytes, sizeof(private_mldsa_key.bytes));
+    mldsa_publ_avg_E += analyze_key_entropy(public_mldsa_key.bytes, sizeof(public_mldsa_key.bytes));
+
+    }
+
+
+    x25519_priv_avg_E /= (float)ITERATIONS;
+    x25519_publ_avg_E /= (float)ITERATIONS;
+    mlkem_priv_avg_E /= (float)ITERATIONS;
+    mlkem_publ_avg_E /= (float)ITERATIONS;
+    mldsa_priv_avg_E /= (float)ITERATIONS;
+    mldsa_publ_avg_E /= (float)ITERATIONS;
+
+    printf("X25519 (PRIVATE KEY) AVG E = %f\n", x25519_priv_avg_E);
+    printf("X25519 (PUBLIC KEY)  AVG E = %f\n", x25519_publ_avg_E);
+
+    printf("ML-KEM-1024 (PRIVATE KEY) AVG E = %f\n", mlkem_priv_avg_E);
+    printf("ML-KEM-1024 (PUBLIC KEY)  AVG E = %f\n", mlkem_publ_avg_E);
+    
+    printf("ML-DSA-87 (PRIVATE KEY) AVG E = %f\n", mldsa_priv_avg_E);
+    printf("ML-DSA-87 (PUBLIC KEY)  AVG E = %f\n", mldsa_publ_avg_E);
+    return 0;
+}
+
+float analyze_key_entropy(uint8_t* array, int key_len) {
+
+    // Calculate entropy.
+
+    int counts[UINT8_MAX] = { 0 };
+    for(int i = 0; i < key_len; i++) {
+        counts[(int)array[i]]++;
+    }
+
+    float prob[32] = { 0 };
+    int prob_i = 0;
+
+    for(int i = 0; i < UINT8_MAX; i++) { 
+        if(prob_i > key_len) {
+            fprintf(stderr, "ERROR: Too many elements.\n");
+            return 0.0f;
+        } 
+
+        if(counts[i] > 0) {
+            prob[prob_i++] = (float)counts[i] / (float)key_len;
+        }
+    }
+
+    float E = 0.0f;
+
+    for(int i = 0; i < 32; i++) {
+        if(prob[i] > 0.0000001f) {
+            E -= log2f(prob[i]);
+        }
+    }
+
+
+    return E;
+}
+
+*/
 
 // Mutex is used for reading input because the main thread requires input as well.
 // Otherwise both will get the same input...
@@ -184,7 +291,7 @@ int main(int argc, char** argv) {
             break;
         }
         if(input_ch == 'r') {
-            const char* message = "Hello! Cryptography is interesting.";
+            char* message = "Hello! Cryptography is interesting.";
             mutka_send_message(client, message, strlen(message));
         }
 

@@ -677,6 +677,7 @@ struct mutka_client* mutka_connect
     }
 
 
+
     const int port_num = atoi(port);
     if((port_num < 0) || (port_num > UINT16_MAX)) {
         mutka_set_errmsg("Given host port \"%s\" cannot be correct. It must be in range of 0 to %i",
@@ -778,7 +779,7 @@ void mutka_init_metadata_key_exchange(struct mutka_client* client) {
         return;
     }
 
-    mutka_rpacket_prep(&client->out_raw_packet, MPACKET_EXCHANGE_METADATA_KEYS);
+    mutka_rpacket_prep(&client->out_raw_packet, CTOS_MPACKET_EXCH_METADATA_KEYS);
     mutka_rpacket_add_ent(&client->out_raw_packet,
             "x25519_public",
             client->mtdata_keys.x25519_publkey.bytes,
@@ -904,7 +905,11 @@ static bool p_mutka_client_save_trusted_host
 }
 
 
-static bool p_mutka_client_process_host_signature(struct mutka_client* client) {
+static bool p_mutka_client_process_host_publkey
+(
+    struct mutka_client* client,
+    key_mldsa87_publ_t* host_publkey
+){
     bool result = false;
  
     // "host_addr@host_port:"
@@ -916,34 +921,13 @@ static bool p_mutka_client_process_host_signature(struct mutka_client* client) {
         mutka_set_errmsg("%s: %s", __func__, strerror(errno));
         goto out;
     }
-   
-    struct mutka_str* encoded_host_publkey = &client->inpacket.elements[0].data;
-    key_mldsa87_publ_t host_publkey;
-
-    const uint32_t decoded_host_publkey_len 
-        = mutka_get_decoded_buffer_len(encoded_host_publkey->size);
-
-
-    if(decoded_host_publkey_len != sizeof(host_publkey.bytes)) {
-        mutka_set_errmsg("%s: Received host public key length doesnt match expected value.", 
-                __func__);
-        goto out;
-    }
-
-
-    if(!mutka_decode(host_publkey.bytes, sizeof(host_publkey.bytes),
-                encoded_host_publkey->bytes,
-                encoded_host_publkey->size)) {
-        mutka_set_errmsg("%s: Failed to decode host public key.", __func__);
-        goto out;
-    }
-
+  
     // Maybe the "trusted_hosts" file is never used before.
     if(mutka_file_size(client->config.trusted_hosts_path) == 0) {
         if(p_mutka_client_save_trusted_host(
                 client,
                 host_tag, host_tag_len,
-                &host_publkey)) {
+                host_publkey)) {
             goto new_host_saved;
         }
         goto out;
@@ -959,14 +943,13 @@ static bool p_mutka_client_process_host_signature(struct mutka_client* client) {
     }
 
     // Try to find host tag.
-    // If found, the saved combined hash will follow.
     const ssize_t host_index = mutka_charptr_find(hosts_file, hosts_file_size, host_tag, host_tag_len);
     if(host_index < 0) {
         // Host tag was not found.
         if(p_mutka_client_save_trusted_host(
                 client,
                 host_tag, host_tag_len,
-                &host_publkey)) {
+                host_publkey)) {
             goto new_host_saved;
         }
         
@@ -974,7 +957,7 @@ static bool p_mutka_client_process_host_signature(struct mutka_client* client) {
     }
     
     const char* search_begin = hosts_file + host_index + host_tag_len;
-    const char* search_end = search_begin + sizeof(host_publkey.bytes);
+    const char* search_end = search_begin + sizeof(host_publkey->bytes);
 
     if(search_end > hosts_file + hosts_file_size) {
         mutka_set_errmsg("Could not find correct host tag index from \"trusted_hosts\" file.\n"
@@ -982,7 +965,7 @@ static bool p_mutka_client_process_host_signature(struct mutka_client* client) {
         goto unmap_and_out;
     }
 
-    if(search_end - search_begin != sizeof(host_publkey.bytes)) {
+    if(search_end - search_begin != sizeof(host_publkey->bytes)) {
         mutka_set_errmsg("Failed to calculate correct size search region for host signature and public key hash.");
         goto unmap_and_out;
     }
@@ -992,7 +975,7 @@ static bool p_mutka_client_process_host_signature(struct mutka_client* client) {
     bool   host_publkey_match = true;
 
     while(byte < search_end) {
-        if((uint8_t)*byte != host_publkey.bytes[host_publkey_index++]) {
+        if((uint8_t)*byte != host_publkey->bytes[host_publkey_index++]) {
             host_publkey_match = false;
             break;
         }
@@ -1005,10 +988,10 @@ static bool p_mutka_client_process_host_signature(struct mutka_client* client) {
             goto unmap_and_out;
         }
 
-        // Overwrite host signature + public key hash.
+        // Overwrite host public key.
         memmove(hosts_file + host_index + host_tag_len,
-                host_publkey.bytes,
-                sizeof(host_publkey.bytes));
+                host_publkey->bytes,
+                sizeof(host_publkey->bytes));
 
         // Synchronize memory with file to avoid undefined reads in the future.
         msync(hosts_file, hosts_file_size, MS_SYNC);
@@ -1018,8 +1001,8 @@ static bool p_mutka_client_process_host_signature(struct mutka_client* client) {
 new_host_saved:
 
     memmove(client->host_mldsa87_publkey.bytes,
-            host_publkey.bytes,
-            sizeof(host_publkey.bytes));
+            host_publkey->bytes,
+            sizeof(host_publkey->bytes));
 
 
     result = true;
@@ -1040,7 +1023,7 @@ void mutka_send_captcha_answer(struct mutka_client* client, char* answer, size_t
         return;
     }
 
-    mutka_rpacket_prep(&client->out_raw_packet, MPACKET_CAPTCHA);
+    mutka_rpacket_prep(&client->out_raw_packet, SPV_MPACKET_CAPTCHA);
     mutka_rpacket_add_ent(&client->out_raw_packet,
             "answer",
             answer,
@@ -1159,7 +1142,7 @@ static bool p_encrypt_message_for_next_peer(struct mutka_client* client) {
     }
 
 
-
+                
     // Create signature from SHA512(outgoing_keys) + SHA512(message_cipher);
 
     uint8_t sign_data[SHA512_DIGEST_LENGTH * 3] = { 0 };
@@ -1193,7 +1176,7 @@ static bool p_encrypt_message_for_next_peer(struct mutka_client* client) {
    
     // Start preparing packet to send.
     
-    mutka_rpacket_prep(&client->out_raw_packet, MPACKET_SEND_MSG);
+    mutka_rpacket_prep(&client->out_raw_packet, CTOS_MPACKET_SEND_MSG_CIPHER);
   
     printf("Receiver: %i\n", peer_msgkeys->uid);
 
@@ -1251,6 +1234,12 @@ static bool p_encrypt_message_for_next_peer(struct mutka_client* client) {
             sizeof(signature.bytes),
             RPACKET_ENCODE);
 
+    mutka_rpacket_add_ent(&client->out_raw_packet,
+            "identity_publkey",
+            client->config.identity_publkey.bytes,
+            sizeof(client->config.identity_publkey.bytes),
+            RPACKET_ENCODE);
+
     mutka_send_encrypted_rpacket(
             client->socket_fd,
             &client->out_raw_packet,
@@ -1273,7 +1262,8 @@ out:
 }
 
 // This function is called when 
-// "is_last_peer" is set to 'true' in MPACKET_GET_PEER_PUBLKEYS
+// "is_last_peer" is set to 'true' 
+// from 'mutka_client_handle_packet()' case STOC_MPACKET_PEER_MSGKEYS
 static void p_handle_received_msg_keys(struct mutka_client* client) {
     
     // For now client can only send message with the received peer msg public keys.
@@ -1301,30 +1291,100 @@ void mutka_client_handle_packet(struct mutka_client* client) {
     // Check for internal packets first.
     switch(client->inpacket.id) {
 
-        case MPACKET_MSG_RECV:
-            printf("MPACKET_MSG_RECV: %li elements\n", client->inpacket.num_elements);
+        case STOC_MPACKET_NEW_MSG_CIPHER:
+            {
+                struct mpacket_data packet_data; 
+                if(!mutka_validate_parsed_packet(&packet_data, &client->inpacket)) {
+                    return;
+                }
+
+                struct P_MSG_RECV_struct* packet = &packet_data.P_MSG_RECV;
+
+                // Verify the message and keys.
+                
+                uint8_t sign_data[SHA512_DIGEST_LENGTH * 3] = { 0 };
+
+                // Self X25519 public key.
+                SHA512(packet->x25519_publkey.bytes,
+                        sizeof(packet->x25519_publkey.bytes),
+                        sign_data);
+
+                // ML-KEM-1024 Ciphertext.
+                SHA512(packet->mlkem_cipher.bytes,
+                        sizeof(packet->mlkem_cipher.bytes),
+                        sign_data + SHA512_DIGEST_LENGTH);
+
+                // Message ciphertext.
+                SHA512((uint8_t*)packet->msg_cipher.bytes,
+                        packet->msg_cipher.size,
+                        sign_data + SHA512_DIGEST_LENGTH*2);
+
+
+                const char* signature_context = MUTKA_VERSION_STR"(SIGN_ENCRYPTED_MESSAGE_FOR_PEER)";
+                if(!mutka_openssl_MLDSA87_verify(
+                            signature_context,
+                            &packet->signature,
+                            &packet->identity_publkey,
+                            sign_data,
+                            sizeof(sign_data))) {
+                    mutka_set_errmsg("MPACKET_MSG_RECV: Failed to verify signature.");
+                    return;
+                }
+
+
+                key128bit_t hybrid_key;
+
+                const char* hkdf_info = MUTKA_VERSION_STR"(ENCRYPTED_MESSAGE_FOR_PEER)";
+
+                // The signature parameters for this function can be
+                // set to NULL because it is already confirmed in other way.
+                // TODO: Maybe refactor for 'mutka_hybrid_kem_decaps()' to not require them.
+                if(!mutka_hybrid_kem_decaps(
+                            &hybrid_key,
+                            &client->msg_keys,
+                            &packet->x25519_publkey,
+                            &packet->mlkem_cipher,
+                            packet->hkdf_salt,
+                            hkdf_info,
+                            NULL,
+                            NULL,
+                            NULL)) {
+                    mutka_set_errmsg("MPACKET_MSG_RECV: mutka_hybrid_kem_decaps() Failed.");
+                    return;
+                }
+
+                struct mutka_str decrypted_msg;
+                mutka_str_alloc(&decrypted_msg);
+
+                
+                if(!mutka_openssl_AES256GCM_decrypt(
+                            &decrypted_msg,
+                            hybrid_key.bytes,
+                            packet->gcm_iv,
+                            packet->gcm_aad.bytes,
+                            packet->gcm_aad.size,
+                            (char*)packet->gcm_tag,
+                            sizeof(packet->gcm_tag),
+                            packet->msg_cipher.bytes,
+                            packet->msg_cipher.size)) {
+                    mutka_set_errmsg("MPACKET_MSG_RECV: Failed to decrypt message.");
+                }
+                
+                printf("Decrypted message: '%s'\n", decrypted_msg.bytes);
+
+
+                mutka_str_free(&decrypted_msg);
+            }
             return;
 
-        case MPACKET_SERVER_MSG_ACK:
+        case STOC_MPACKET_SERVER_MSG_ACK:
             p_encrypt_message_for_next_peer(client);
             break;
 
-        case MPACKET_GET_PEER_PUBLKEYS:
-            if(client->inpacket.num_elements != 5) {
-                mutka_set_errmsg("Failed to receive peer public msg keys.");
-                return;
-            }
+        case STOC_MPACKET_PEER_PUBLKEYS:
             {
-                struct mutka_packet_elem* peer_uid_elem = &client->inpacket.elements[0];
-                struct mutka_packet_elem* identity_publkey_elem = &client->inpacket.elements[1];
-                struct mutka_packet_elem* signature_elem = &client->inpacket.elements[2];
-                struct mutka_packet_elem* x25519_publkey_elem = &client->inpacket.elements[3];
-                struct mutka_packet_elem* mlkem_publkey_elem = &client->inpacket.elements[4];
-
-                printf("MPACKET_GET_PEER_PUBLKEYS\n");
-
                 if(client->num_peer_msg_keys >= client->host_max_clients) {
-                    mutka_set_errmsg("MPACKET_GET_PEER_PUBLKEYS: "
+                    mutka_set_errmsg("STOC_MPACKET_PEER_PUBLKEYS: "
                             "Receiving more peer message keys than there are maximum clients on server.");
                     return;
                 }
@@ -1332,63 +1392,53 @@ void mutka_client_handle_packet(struct mutka_client* client) {
                 struct mutka_client_peer_msgkeys* peer_keys
                     = &client->peer_msg_keys[client->num_peer_msg_keys++];
 
-                if(!mutka_decode(peer_keys->identity_publkey.bytes,
-                            sizeof(peer_keys->identity_publkey.bytes),
-                            identity_publkey_elem->data.bytes,
-                            identity_publkey_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_GET_PEER_PUBLKEYS: "
-                            "Failed to decode peer identity public key.");
-                    return;
-                }
-                if(!mutka_decode((uint8_t*)&peer_keys->uid,
-                            sizeof(peer_keys->uid),
-                            peer_uid_elem->data.bytes,
-                            peer_uid_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_GET_PEER_PUBLKEYS: "
-                            "Failed to decode peer uid");
-                    return;
-                }
-                if(!mutka_decode(peer_keys->signature.bytes,
-                            sizeof(peer_keys->signature.bytes),
-                            signature_elem->data.bytes,
-                            signature_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_GET_PEER_PUBLKEYS: "
-                            "Failed to decode peer message keys signature.");
-                    return;
-                }
-                if(!mutka_decode(peer_keys->x25519_publkey.bytes,
-                            sizeof(peer_keys->x25519_publkey.bytes),
-                            x25519_publkey_elem->data.bytes,
-                            x25519_publkey_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_GET_PEER_PUBLKEYS: "
-                            "Failed to decode peer message X25519 public key.");
-                    return;
-                }
-                if(!mutka_decode(peer_keys->mlkem_publkey.bytes,
-                            sizeof(peer_keys->mlkem_publkey.bytes),
-                            mlkem_publkey_elem->data.bytes,
-                            mlkem_publkey_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_GET_PEER_PUBLKEYS: "
-                            "Failed to decode peer message ML-KEM-1024 public key.");
+
+                struct mpacket_data packet_data;
+                if(!mutka_validate_parsed_packet(&packet_data, &client->inpacket)) {
                     return;
                 }
 
+                struct STOC_PEER_PUBLKEYS_struct* 
+                    packet = &packet_data.STOC_PEER_PUBLKEYS;
 
+
+                peer_keys->uid = packet->peer_uid;
+
+                memmove(&peer_keys->identity_publkey,
+                        &packet->identity_publkey,
+                        sizeof(packet->identity_publkey));
+
+                memmove(&peer_keys->mlkem_publkey,
+                        &packet->mlkem_publkey,
+                        sizeof(packet->mlkem_publkey));
+
+                memmove(&peer_keys->x25519_publkey,
+                        &packet->x25519_publkey,
+                        sizeof(packet->x25519_publkey));
+
+                memmove(&peer_keys->signature,
+                        &packet->signature,
+                        sizeof(packet->signature));
+
+                
                 // Keep asking for next peer public keys
                 // until 'MPACKET_ALL_PEER_PUBLKEYS_SENT' is received.
-                mutka_rpacket_prep(&client->out_raw_packet, MPACKET_GET_PEER_PUBLKEYS);
+                mutka_rpacket_prep(&client->out_raw_packet, CTOS_MPACKET_ASK_PEER_PUBLKEYS);
                 mutka_send_encrypted_rpacket(
                         client->socket_fd,
                         &client->out_raw_packet,
                         &client->mtdata_keys.hshared_key);
             }
             return;
-    
-        case MPACKET_ALL_PEER_PUBLKEYS_SENT:        
+   
+
+        case STOC_MPACKET_ALL_PEER_PUBLKEYS_SENT:        
             p_handle_received_msg_keys(client);
             return;
 
-        case MPACKET_CAPTCHA:
+
+
+        case SPV_MPACKET_CAPTCHA:
             struct mutka_str* captcha_ascii = &client->inpacket.elements[0].data;
             mutka_str_nullterm(captcha_ascii);
 
@@ -1396,85 +1446,54 @@ void mutka_client_handle_packet(struct mutka_client* client) {
             client->config.confirm_server_captcha(client, captcha_ascii->bytes);
             return;
 
-        case MPACKET_HOST_PUBLIC_KEY: 
-            if(client->inpacket.num_elements != 1) {
-                mutka_set_errmsg("Failed to receive host public key.");
-                return;
-            }
-            
-            if(!p_mutka_client_process_host_signature(client)) {
-                return;
-            }
 
-            mutka_init_metadata_key_exchange(client);
+
+        case STOC_MPACKET_HOST_PUBLKEY: 
+            {
+                struct mpacket_data packet_data;
+                if(!mutka_validate_parsed_packet(&packet_data, &client->inpacket)) {
+                    return;
+                }
+
+                struct STOC_HOST_PUBLKEY_struct* packet = &packet_data.STOC_HOST_PUBLKEY;
+
+
+                if(!p_mutka_client_process_host_publkey(
+                            client,
+                            &packet->host_publkey)) {
+                    client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
+                    return;
+                }
+
+                mutka_init_metadata_key_exchange(client);
+            }
             return;
         
-        case MPACKET_EXCHANGE_METADATA_KEYS:
-            if(client->inpacket.num_elements != 4) {
-                mutka_set_errmsg("Failed to receive complete metadata key exchange packet.");
-                return;
-            }
+        case STOC_MPACKET_EXCH_METADATA_KEYS:
             {
-                struct mutka_packet_elem* peer_x25519_elem       = &client->inpacket.elements[0];
-                struct mutka_packet_elem* mlkem_cipher_elem      = &client->inpacket.elements[1];
-                struct mutka_packet_elem* signature_elem         = &client->inpacket.elements[2];
-                struct mutka_packet_elem* hkdf_salt_elem         = &client->inpacket.elements[3];
 
-                uint8_t  hkdf_salt [HKDF_SALT_LEN] = { 0 };
-
-                signature_mldsa87_t    signature;
-                key128bit_t            peer_x25519_publkey;
-                key_mlkem1024_cipher_t mlkem_cipher;
-
-                if(!mutka_decode(peer_x25519_publkey.bytes, sizeof(peer_x25519_publkey.bytes),
-                            peer_x25519_elem->data.bytes,
-                            peer_x25519_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
-                            "Failed to decode peer X25519 public key.");
-                    client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
+                struct mpacket_data packet_data;
+                if(!mutka_validate_parsed_packet(&packet_data, &client->inpacket)) {
                     return;
                 }
 
-                if(!mutka_decode(mlkem_cipher.bytes, sizeof(mlkem_cipher.bytes),
-                            mlkem_cipher_elem->data.bytes,
-                            mlkem_cipher_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
-                            "Failed to decode ML-KEM-1024 key ciphertext.");
-                    client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
-                    return;
-                }
+                struct STOC_EXCH_METADATA_KEYS_struct*
+                    packet = &packet_data.STOC_EXCH_METADATA_KEYS;
 
-                if(!mutka_decode(signature.bytes, sizeof(signature.bytes),
-                            signature_elem->data.bytes,
-                            signature_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
-                            "Failed to decode signature.");
-                    client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
-                    return;
-                }
-                if(!mutka_decode(hkdf_salt, sizeof(hkdf_salt),
-                            hkdf_salt_elem->data.bytes,
-                            hkdf_salt_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
-                            "Failed to decode HKDF salt.");
-                    client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
-                    return;
-                }
 
                 const char* hkdf_info = MUTKA_VERSION_STR"(METADATAKEYS_HYBRIDKEY_HKDF)";
                 const char* sign_context = MUTKA_VERSION_STR"(METADATAKEYS_SIGN_FROM_SERVER)";
 
-
                 if(!mutka_hybrid_kem_decaps(
                             &client->mtdata_keys.hshared_key,
                             &client->mtdata_keys,
+                            &packet->peer_x25519_publkey,
+                            &packet->peer_mlkem_cipher,
+                            packet->hkdf_salt,
+                            hkdf_info,
                             &client->host_mldsa87_publkey,
-                            &peer_x25519_publkey,
-                            &mlkem_cipher,
-                            &signature,
-                            sign_context,
-                            hkdf_salt,
-                            hkdf_info)) {
+                            &packet->signature,
+                            sign_context)) {
                     mutka_set_errmsg("MPACKET_EXCHANGE_METADATA_KEYS: "
                             "mutka_hybrid_kem_decaps() failed!");
                     client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
@@ -1484,38 +1503,35 @@ void mutka_client_handle_packet(struct mutka_client* client) {
                 printf("\033[32mMetadata key exchange with host is complete.\033[0m\n");
 
                 // Inform the server everything is ok and we can continue.
-                mutka_rpacket_prep(&client->out_raw_packet, MPACKET_METADATA_KEY_EXHCANGE_COMPLETE);
+                mutka_rpacket_prep(&client->out_raw_packet, CTOS_MPACKET_INITIAL_SEQ_COMPLETE);
                 mutka_send_clear_rpacket(client->socket_fd, &client->out_raw_packet);
             }
             return;
 
-        case MPACKET_GENERAL_SERVER_INFO:
-            // Server responded to MPACKET_METADATA_KEY_EXHCANGE_COMPLETE.
+        case STOC_MPACKET_SERVER_INFO:
+            // Server responded to CTOS_MPACKET_INITIAL_SEQ_COMPLETE.
 
             if(client->inpacket.num_elements != 1) {
                 mutka_set_errmsg("Failed to receive general server info.");
                 return;
             }
             {
-                struct mutka_packet_elem* max_clients_elem = &client->inpacket.elements[0];
-
                 client->host_max_clients = 0;
-
-                if(!mutka_decode(&client->host_max_clients,
-                            sizeof(client->host_max_clients),
-                            max_clients_elem->data.bytes,
-                            max_clients_elem->data.size)) {
-                    mutka_set_errmsg("Failed to decode \"host_max_clients\"");
+                if(!mutka_strtoany(
+                            &client->inpacket.elements[0].data,
+                            &client->host_max_clients,
+                            sizeof(client->host_max_clients))) { 
                     client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
                     return;
                 }
-
 
                 p_mutka_client_fully_connected(client);
             }
             return;
     }
 
+
+    // TODO: This dont make much senses here.
     client->packet_received_callback(client);
 }
 
@@ -1526,7 +1542,7 @@ void mutka_deposit_new_msgkeys(struct mutka_client* client) {
     }
 
     // Server has to know about the public message keys.
-    mutka_rpacket_prep(&client->out_raw_packet, MPACKET_DEPOSIT_PUBLIC_MSGKEYS);
+    mutka_rpacket_prep(&client->out_raw_packet, CTOS_MPACKET_DEPOSIT_PUBLIC_MSGKEYS);
 
 
     // Create signature from X25519 public key and ML-KEM-1024 public key.
@@ -1589,16 +1605,18 @@ void mutka_send_message(struct mutka_client* client, char* message, size_t messa
    
     if((client->flags & MUTKA_CLFLG_SENDING_MSG)) {
         printf("%s: Previous message is still being sent...\n",__func__);
-        return; // Previous message is still being sent...
+        // TODO: Message queue.
+        return;
     }
 
+
+
     client->num_peer_msg_keys = 0;
-    mutka_rpacket_prep(&client->out_raw_packet, MPACKET_GET_PEER_PUBLKEYS);
+    mutka_rpacket_prep(&client->out_raw_packet, CTOS_MPACKET_ASK_PEER_PUBLKEYS);
     mutka_send_encrypted_rpacket(
             client->socket_fd,
             &client->out_raw_packet,
             &client->mtdata_keys.hshared_key);
-
 
     mutka_str_move(&client->plaintext_msg, message, message_len);
 }

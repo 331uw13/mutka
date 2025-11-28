@@ -24,8 +24,6 @@ typedef struct {
 sha512_hash_t;
 
 
-
-
 struct mutka_cipher_keys {
     key128bit_t          x25519_privkey;
     key128bit_t          x25519_publkey;
@@ -44,13 +42,13 @@ bool mutka_hybrid_kem_decaps
 (
     key128bit_t*              hybrid_key_out,
     struct mutka_cipher_keys* self_keys,
-    key_mldsa87_publ_t*       self_sign_verify_key,
     key128bit_t*              peer_x25519_publkey,
     key_mlkem1024_cipher_t*   peer_mlkem_cipher,
-    signature_mldsa87_t*      peer_signature,
-    const char*               signature_context,
     uint8_t*                  hkdf_salt,
-    const char*               hkdf_info
+    const char*               hkdf_info,
+    key_mldsa87_publ_t*       self_sign_verify_key,
+    signature_mldsa87_t*      peer_signature,
+    const char*               signature_context
 );
 
 bool mutka_hybrid_kem_encaps

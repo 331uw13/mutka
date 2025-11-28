@@ -5,7 +5,7 @@ TARGET_NAME = libmutka.so
 
 SRC  = $(shell find ./src -type f -name *.c)
 OBJS = $(SRC:.c=.o)
-LIBS = -lpthread -lssl -lcrypto
+LIBS = -lpthread -lssl -lcrypto -lm
 
 all: $(TARGET_NAME)
 

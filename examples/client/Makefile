@@ -5,7 +5,7 @@ TARGET_NAME = client
 
 SRC  = $(shell find ./src -type f -name *.c)
 OBJS = $(SRC:.c=.o)
-LIBS = -L../../libmutka -Wl,-rpath,../../libmutka -lmutka -lssl -lcrypto
+LIBS = -L../../libmutka -Wl,-rpath,../../libmutka -lmutka -lm -lssl -lcrypto
 
 all: $(TARGET_NAME)
 
