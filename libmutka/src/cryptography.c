@@ -956,7 +956,6 @@ bool mutka_hybrid_kem_decaps
         goto out;
     }
 
-
     // Combine X25519 and ML-KEM-1024 shared keys
     // and pass that through HKDF to get hybrid shared key.
 
@@ -1003,7 +1002,6 @@ bool mutka_hybrid_kem_encaps
 
     key128bit_t x25519_shared_secret;
     key128bit_t mlkem_shared_secret;
-
 
     if(!mutka_openssl_derive_shared_secret(
                 &x25519_shared_secret,

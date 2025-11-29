@@ -39,4 +39,8 @@ bool mutka_decode(uint8_t* buf, size_t buf_memsize, char* encoded, size_t size);
 
 
 
+#define DEBUG_PRINT_FUNC printf("\033[31m%s\033[0m\n", __func__)
+
+
+
 #endif

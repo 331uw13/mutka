@@ -14,7 +14,7 @@
 
 #define RPACKET_HEADER_SIZE (sizeof(int)*2)
 
-#define DEBUG
+//#define DEBUG
 #define DEBUG_HEAD_N 100
 
 #ifdef DEBUG
@@ -125,9 +125,27 @@ bool mutka_rpacket_add_ent
         return false;
     }
 
+#ifdef DEBUG
+    int _packet_id = 0;
+    memcpy(&_packet_id, packet->data, sizeof(_packet_id));
+    printf("\033[35m%s: \033[36m\"%s\" (SENDING) \033[34m\n", mutka_get_packet_name(_packet_id), label);
+    if(encoding_option == RPACKET_ENCODE) {
+        for(size_t i = 0; i < data_size; i++) {
+            printf("%02X ", ((uint8_t*)data)[i]);
+            if(i > 0xFF) {
+                printf("\033[90m...");
+                break;
+            }
+        }
+    }
+    else {
+        printf("%s\n", (char*)data);
+    }   
+    printf("\033[0m\n\n");
 
-    printf("%s: Add entry (data = %p, data_size = %li)\n",
-            __func__, data, data_size);
+#endif
+    //printf("%s: Add entry (data = %p, data_size = %li)\n",
+    //        __func__, data, data_size);
 
     if(encoding_option == RPACKET_ENCODE) {
         mutka_str_alloc(&data_encoded);
@@ -209,9 +227,6 @@ void mutka_send_clear_rpacket(int socket_fd, struct mutka_raw_packet* packet) {
         return;
     }
 
-#ifdef DEBUG
-    p_dump_packet(packet, "Sent (Not Encrypted)");
-#endif
     send(socket_fd, packet->data, packet->size, 0);
 }
 
@@ -315,9 +330,6 @@ out:
 }
 
 bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* raw_packet) {
-#ifdef DEBUG
-    p_dump_packet(raw_packet, "received");
-#endif
 
     bool result = false;
 
@@ -419,7 +431,30 @@ bool mutka_parse_rpacket(struct mutka_packet* packet, struct mutka_raw_packet* r
                             __func__, packet->id);
                     goto out;
                 }
-                
+    
+
+#ifdef DEBUG
+    
+                printf("\033[36m%s: \033[35m\"%s\" (RECEIVING) \033[33m\n", 
+                        mutka_get_packet_name(packet->id), curr_elem->label.bytes);
+
+                if(curr_elem->encoding == RPACKET_ENCODE) {
+                    for(int i = 0; i < curr_elem->data.size; i++) {
+                        printf("%02X ", (uint8_t)curr_elem->data.bytes[i]);
+                        if(i > 0xFF) {
+                            printf("...\n");
+                            break;
+                        }
+                    }
+                }
+                else {
+                    printf("%s\n", curr_elem->data.bytes);
+                }
+
+                printf("\033[0m\n\n");
+#endif
+
+
                 packet->num_elements++;
                 if(packet->num_elements >= packet->num_elems_allocated) {
                     goto out;
@@ -459,10 +494,6 @@ void mutka_send_encrypted_rpacket
     if(!p_mutka_add_packet_expected_size(packet)) {
         return;
     }
-
-#ifdef DEBUG
-    p_dump_packet(packet, "Sent (Before encryption)");
-#endif
 
     struct mutka_str cipher;
     struct mutka_str out;
@@ -694,7 +725,23 @@ void mutka_replace_inpacket_id
 }
 
 const char* mutka_get_packet_name(int packet_id) {
-    return "MUTKA_GET_PACKET_NAME() NOT IMPLEMENTED";
+
+    switch(packet_id) {
+        case SPV_MPACKET_CAPTCHA:                  return "SPV_MPACKET_CAPTCHA";
+        case STOC_MPACKET_HOST_PUBLKEY:            return "STOC_MPACKET_HOST_PUBLKEY";
+        case STOC_MPACKET_EXCH_METADATA_KEYS:      return "STOC_MPACKET_EXCH_METADATA_KEYS";
+        case CTOS_MPACKET_EXCH_METADATA_KEYS:      return "CTOS_MPACKET_EXCH_METADATA_KEYS";
+        case CTOS_MPACKET_INITIAL_SEQ_COMPLETE:    return "CTOS_MPACKET_INITIAL_SEQ_COMPLETE";
+        case STOC_MPACKET_SERVER_INFO:             return "STOC_MPACKET_SERVER_INFO";
+        case CTOS_MPACKET_DEPOSIT_PUBLIC_MSGKEYS:  return "CTOS_MPACKET_DEPOSIT_PUBLIC_MSGKEYS";
+        case CTOS_MPACKET_ASK_PEER_PUBLKEYS:       return "CTOS_MPACKET_ASK_PEER_PUBLKEYS";
+        case STOC_MPACKET_PEER_PUBLKEYS:           return "STOC_MPACKET_PEER_PUBLKEYS";
+        case STOC_MPACKET_ALL_PEER_PUBLKEYS_SENT:  return "STOC_MPACKET_ALL_PEER_PUBLKEYS_SENT";
+        case STOC_MPACKET_SERVER_MSG_ACK:          return "STOS_MPACKET_SERVER_MSG_ACK";
+        case STOC_MPACKET_NEW_MSG_CIPHER:          return "STOC_MPACKET_NEW_MSG_CIPHER";
+    }
+
+    return "<UNKNOWN_PACKET_ID>";
 }
 
 
@@ -748,8 +795,8 @@ bool mutka_validate_parsed_packet(struct mpacket_data* packet_struct, struct mut
             {
                 struct mutka_packet_elem* peer_uid_elem            = &inpacket->elements[0];
                 struct mutka_packet_elem* identity_publkey_elem    = &inpacket->elements[1];
-                struct mutka_packet_elem* mlkem_publkey_elem       = &inpacket->elements[2];
-                struct mutka_packet_elem* x25519_publkey_elem      = &inpacket->elements[3];
+                struct mutka_packet_elem* x25519_publkey_elem      = &inpacket->elements[2];
+                struct mutka_packet_elem* mlkem_publkey_elem       = &inpacket->elements[3];
                 struct mutka_packet_elem* signature_elem           = &inpacket->elements[4];
                 
                 struct STOC_PEER_PUBLKEYS_struct* out_p = &packet_struct->STOC_PEER_PUBLKEYS;
@@ -818,6 +865,10 @@ bool mutka_validate_parsed_packet(struct mpacket_data* packet_struct, struct mut
                 memcpy(out_p->identity_publkey.bytes,
                         identity_publkey_elem->data.bytes,
                         identity_publkey_elem->data.size);
+
+                memcpy(out_p->x25519_publkey.bytes,
+                        x25519_publkey_elem->data.bytes,
+                        x25519_publkey_elem->data.size);
 
                 memcpy(out_p->mlkem_publkey.bytes,
                         mlkem_publkey_elem->data.bytes,
@@ -1046,7 +1097,7 @@ bool mutka_validate_parsed_packet(struct mpacket_data* packet_struct, struct mut
             break;
 
 
-        case CTOS_MPACKET_SEND_MSG_CIPHER:
+        case STOC_MPACKET_NEW_MSG_CIPHER:
             if(inpacket->num_elements != 10) {
                 mutka_set_errmsg("%s: %s: Invalid number of elements.", 
                         __func__, mutka_get_packet_name(inpacket->id));
@@ -1064,7 +1115,7 @@ bool mutka_validate_parsed_packet(struct mpacket_data* packet_struct, struct mut
                 struct mutka_packet_elem* mlkem_cipher_elem      = &inpacket->elements[8];
                 struct mutka_packet_elem* signature_elem         = &inpacket->elements[9];
 
-                struct CTOS_SEND_MSG_CIPHER_struct* out_p = &packet_struct->CTOS_SEND_MSG_CIPHER;
+                struct STOC_NEW_MSG_CIPHER_struct* out_p = &packet_struct->STOC_NEW_MSG_CIPHER;
 
                 // NOTE: Message cipher and gcm_aad length dont matter.
 
@@ -1138,13 +1189,13 @@ bool mutka_validate_parsed_packet(struct mpacket_data* packet_struct, struct mut
                     return false;
                 }
 
+                out_p->msg_cipher = &msg_cipher_elem->data;
+                out_p->gcm_aad = &gcm_aad_elem->data;
 
                 memcpy(&out_p->receiver_uid,
                         receiver_uid_elem->data.bytes,
                         receiver_uid_elem->data.size);
 
-                // TODO: Set msg cipher, gcm_aad...
-                
                 memcpy(out_p->gcm_iv,
                         gcm_iv_elem->data.bytes,
                         gcm_iv_elem->data.size);
@@ -1175,10 +1226,6 @@ bool mutka_validate_parsed_packet(struct mpacket_data* packet_struct, struct mut
             }
             break;
 
-        case STOC_MPACKET_NEW_MSG_CIPHER:
-            {
-            }
-            break;
 
         default:
             return false;

@@ -678,6 +678,23 @@ static void p_mutka_server_nomore_peer_msgkeys
     // -------------------------------------------------------
 }
 
+struct mutka_client* mutka_server_find_client_by_uid
+(
+    struct mutka_server* server, 
+    int uid
+){
+    struct mutka_client* client = NULL;
+
+    for(uint8_t i = 0; i < server->num_clients; i++) {
+        if(server->clients[i].uid == uid) {
+            client = &server->clients[i];
+            break;
+        }
+    }
+
+    return client;
+}
+
 void mutka_server_handle_packet
 (
     struct mutka_server* server,
@@ -688,9 +705,6 @@ void mutka_server_handle_packet
     switch(server->inpacket.id) {
 
         case CTOS_MPACKET_SEND_MSG_CIPHER:
-            printf("\033[31mCTOS_MPACKET_SEND_MSG_CIPHER\033[0m NOT IMPLEMENTED! \n");
-            return;
-            /*
             if(!p_client_verified(server, client)) {
                 return;
             }
@@ -698,76 +712,48 @@ void mutka_server_handle_packet
                 return;
             }
             {
-                // TODO: This could be improved in the future.
+                struct mutka_packet_elem* recv_uid_elem = &server->inpacket.elements[0];
 
-                struct mutka_packet_elem* receiver_uid_elem = &server->inpacket.elements[0];
+                // This packet is not verified by the server
+                // because the server's only job for this packet is
+                // to "forward" the packet to the message receiver.
+                // Receiver must validate the data.
 
-                int receiver_uid = -1;
-                if(!mutka_decode(
-                            (uint8_t*)&receiver_uid,
-                            sizeof(receiver_uid),
-                            receiver_uid_elem->data.bytes,
-                            receiver_uid_elem->data.size)) {
-                    mutka_set_errmsg("MPACKET_SEND_MSG: Failed to decode receiver uid.");
+                int receiver_uid = 0;
+
+                if(recv_uid_elem->data.size != sizeof(receiver_uid)) {
+                    mutka_set_errmsg("%s: %s: Bad receiver uid.",
+                            __func__, mutka_get_packet_name(server->inpacket.id));
                     return;
                 }
+               
+                memcpy(&receiver_uid,
+                        recv_uid_elem->data.bytes,
+                        recv_uid_elem->data.size);
+              
+                struct mutka_client* receiver
+                    = mutka_server_find_client_by_uid(server, receiver_uid);
 
-                struct mutka_client* receiver = NULL;
-                for(uint8_t i = 0; i < server->num_clients; i++) {
-                    if(server->clients[i].uid == receiver_uid) {
-                        receiver= &server->clients[i];
-                        break;
-                    }
-                }
                 if(!receiver) {
-                    mutka_set_errmsg("MPACKET_SEND_MSG: "
-                            "Failed to find receiver(%i) for encrypted message.", receiver_uid);
+                    mutka_set_errmsg("%s: %s: Failed to find receiver by uid.",
+                            __func__, mutka_get_packet_name(server->inpacket.id));
                     return;
                 }
 
-
-                if(!p_client_verified(server, receiver)) {
-                    mutka_set_errmsg("MPACKET_SEND_MSG: "
-                            "Receiver is not verified, cant continue.");
-                    return;
-                }
-
-
-                // "Forward" packet to receiver with different packet id.
-                mutka_replace_inpacket_id(&server->inpacket, MPACKET_MSG_RECV);
+                mutka_replace_inpacket_id(&server->inpacket, STOC_MPACKET_NEW_MSG_CIPHER);
                 mutka_send_encrypted_rpacket(
                         receiver->socket_fd,
                         &server->inpacket.raw_packet,
                         &receiver->mtdata_keys.hshared_key);
-
-
-                // Tell message sender we "forwarded" the message.
-                mutka_rpacket_prep(&server->out_raw_packet, MPACKET_SERVER_MSG_ACK);
-                mutka_send_encrypted_rpacket(
-                        client->socket_fd,
-                        &server->out_raw_packet,
-                        &client->mtdata_keys.hshared_key);
-
-                printf("MPACKET_SEND_MSG: Receiver: %i\n", receiver_uid);
             }
             return;
-            */
 
         case CTOS_MPACKET_ASK_PEER_PUBLKEYS:
             if(!p_client_verified(server, client)) {
                 return;
             }
             {
-                /*
-                memset(server->tmp_peer_info, 0, 
-                        server->tmp_peer_info_len > 
-                        MUTKA_TMPPEERINFO_MAX ? MUTKA_TMPPEERINFO_MAX : server->tmp_peer_info_len);
-                server->tmp_peer_info_len = 0;
-                */
-                
-
                 server->flags |= MUTKA_SFLG_SENDING_CLIENT_MSGPUBLKEYS;
-                //bool is_last_peer = (client->send_peerinfo_index+1 >= server->num_clients);
               
                 bool is_last_peer = false;
                 struct mutka_client* peer 
@@ -806,12 +792,6 @@ void mutka_server_handle_packet
                         RPACKET_ENCODE);
 
                 mutka_rpacket_add_ent(&server->out_raw_packet,
-                        "msg_key_signature",
-                        peer->msg_keys.signature.bytes,
-                        sizeof(peer->msg_keys.signature.bytes),
-                        RPACKET_ENCODE);
-
-                mutka_rpacket_add_ent(&server->out_raw_packet,
                         "msg_x25519_public",
                         peer->msg_keys.x25519_publkey.bytes,
                         sizeof(peer->msg_keys.x25519_publkey.bytes),
@@ -822,6 +802,13 @@ void mutka_server_handle_packet
                         peer->msg_keys.mlkem_publkey.bytes,
                         sizeof(peer->msg_keys.mlkem_publkey.bytes),
                         RPACKET_ENCODE);
+
+                mutka_rpacket_add_ent(&server->out_raw_packet,
+                        "msg_key_signature",
+                        peer->msg_keys.signature.bytes,
+                        sizeof(peer->msg_keys.signature.bytes),
+                        RPACKET_ENCODE);
+
 
                 mutka_send_encrypted_rpacket(
                         client->socket_fd,
@@ -857,21 +844,22 @@ void mutka_server_handle_packet
                     packet = &packet_data.CTOS_DEPOSIT_PUBLIC_MSGKEYS;
 
                 memmove(client->msg_keys.identity_publkey.bytes,
-                        packet->identity_publkey.bytes,
+                               packet->identity_publkey.bytes,
                         sizeof(packet->identity_publkey.bytes));
 
                 memmove(client->msg_keys.x25519_publkey.bytes,
-                        packet->x25519_publkey.bytes,
+                               packet->x25519_publkey.bytes,
                         sizeof(packet->x25519_publkey.bytes));
 
                 memmove(client->msg_keys.mlkem_publkey.bytes,
-                        packet->mlkem_publkey.bytes,
+                               packet->mlkem_publkey.bytes,
                         sizeof(packet->mlkem_publkey.bytes));
 
                 memmove(client->msg_keys.signature.bytes,
-                        packet->signature.bytes,
+                               packet->signature.bytes,
                         sizeof(packet->signature.bytes));
 
+                printf("Deposit client(%i) msg keys.\n", client->uid);
                 client->flags |= MUTKA_SCFLG_HAS_MSGKEYS;
             }
             return;

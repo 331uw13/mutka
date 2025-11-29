@@ -201,32 +201,14 @@ struct mpacket_data {
 
         // ------------------------------------------
 
-        struct CTOS_SEND_MSG_CIPHER_struct
-        {
-            int              receiver_uid;
-            struct mutka_str msg_cipher;
-            struct mutka_str gcm_aad;
-            uint8_t          gcm_iv  [AESGCM_IV_LEN];
-            uint8_t          gcm_tag [AESGCM_TAG_LEN];
-            uint8_t          hkdf_salt [HKDF_SALT_LEN];
-            
-            key_mldsa87_publ_t      identity_publkey;
-            key128bit_t             x25519_publkey;
-            key_mlkem1024_cipher_t  mlkem_cipher;
-            signature_mldsa87_t     signature;
-        }
-        CTOS_SEND_MSG_CIPHER;
-    
-        // ------------------------------------------
-
         struct STOC_NEW_MSG_CIPHER_struct
         {
-            int              receiver_uid;
-            struct mutka_str msg_cipher;
-            struct mutka_str gcm_aad;
-            uint8_t          gcm_iv  [AESGCM_IV_LEN];
-            uint8_t          gcm_tag [AESGCM_TAG_LEN];
-            uint8_t          hkdf_salt [HKDF_SALT_LEN];
+            int               receiver_uid;
+            struct mutka_str* msg_cipher;
+            struct mutka_str* gcm_aad;
+            uint8_t           gcm_iv  [AESGCM_IV_LEN];
+            uint8_t           gcm_tag [AESGCM_TAG_LEN];
+            uint8_t           hkdf_salt [HKDF_SALT_LEN];
             
             key_mldsa87_publ_t      identity_publkey;
             key128bit_t             x25519_publkey;

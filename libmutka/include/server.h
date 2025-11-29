@@ -83,6 +83,6 @@ void mutka_server_remove_client
 );
 
 void mutka_close_server(struct mutka_server* server);
-
+struct mutka_client* mutka_server_find_client_by_uid(struct mutka_server* server, int uid);
 
 #endif
