@@ -1,5 +1,4 @@
 ideas.txt
 external/
 *.a
-server
-client
+*.example
