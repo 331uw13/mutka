@@ -5,9 +5,6 @@ if [[ -z $1 ]]; then
     exit
 fi
 
-(cd libmutka/ && make clean)
-(cd examples/server/ && make clean)
-(cd examples/client/ && make clean)
 
 rm ./examples/server/host_keys
 

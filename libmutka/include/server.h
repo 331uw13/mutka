@@ -24,6 +24,7 @@
 // For now this problem is solved by adding client disconnects
 // to a queue and processed when this flag is not set.
 #define MUTKA_SFLG_SENDING_CLIENT_MSGPUBLKEYS (1 << 0)
+#define MUTKA_SFLG_SHUTDOWN (1 << 1)
 
 
 struct mutka_server;

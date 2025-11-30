@@ -16,36 +16,27 @@
 #define MUTKA_CAPTCHA_MAX 6
 #define MUTKA_TMPPEERINFO_MAX (1024 * 8)
 
-#ifdef MUTKA_CLIENT
-
+#ifdef MUTKA_CLIENT  //    Client side
+#undef MUTKA_SERVER  // -----------------
     // Mutka client config flags (for: mutka_client_cfg)
     
-    #define MUTKA_CCFLG_HAS_PRIVIDENTITY_KEY (1 << 0)
-    #define MUTKA_CCFLG_CONFIG_VALIDATED (1 << 1)
+    #define MUTKA_CCFLG_HAS_PRIVIDENTITY_KEY   (1 << 0)
+    #define MUTKA_CCFLG_CONFIG_VALIDATED       (1 << 1)
+    #define MUTKA_CLFLG_SHOULD_DISCONNECT      (1 << 2)
+    #define MUTKA_CLFLG_WAITING_CAPTCHA_INPUT  (1 << 3)
+    #define MUTKA_CLFLG_SENDING_MSG            (1 << 4)
+    #define MUTKA_CLFLG_SHUTDOWN               (1 << 5)
 
-    // Mutka client flags (for: struct mutka_client)
-    
-    #define MUTKA_CLFLG_SHOULD_DISCONNECT (1 << 2)
-    #define MUTKA_CLFLG_WAITING_CAPTCHA_INPUT (1 << 3)
-    #define MUTKA_CLFLG_SENDING_MSG (1 << 3)
-
-
-#elifdef MUTKA_SERVER
+#endif
+#ifdef MUTKA_SERVER  //    Server side
+#undef MUTKA_CLIENT  // -----------------
     // Mutka server side client flags (for: struct mutka_client)
     
-    #define MUTKA_SCFLG_CAPTCHA_COMPLETE (1 << 0)
-
-    // Client and server have exchanged metadata keys.
-    #define MUTKA_SCFLG_MTDATAKEYS_EXCHANGED (1 << 1)
-
-    // Client responded with MPACKET_METADATA_KEY_EXHCANGE_COMPLETE
-    // to metadata key exchange.
-    #define MUTKA_SCFLG_MTDATAKEYS_COMPLETE (1 << 2)
-
-    // Client has been completely verified and can send messages.
-    #define MUTKA_SCFLG_VERIFIED (1 << 3)
-    
-    #define MUTKA_SCFLG_HAS_MSGKEYS (1 << 4)
+    #define MUTKA_SCFLG_CAPTCHA_COMPLETE       (1 << 0)
+    #define MUTKA_SCFLG_MTDATAKEYS_EXCHANGED   (1 << 1)
+    #define MUTKA_SCFLG_MTDATAKEYS_COMPLETE    (1 << 2)
+    #define MUTKA_SCFLG_VERIFIED               (1 << 3)
+    #define MUTKA_SCFLG_HAS_MSGKEYS            (1 << 4)
 
 #endif
 
@@ -158,8 +149,8 @@ struct mutka_client {
     void(*packet_received_callback)(struct mutka_client*);
 
     uint8_t client_nonce[16];
-    
-#elifdef MUTKA_SERVER // (Not on client side)
+#endif
+#ifdef MUTKA_SERVER
 
     // When client requests all other client's
     // message public keys and signature,

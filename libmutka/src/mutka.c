@@ -3,6 +3,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <poll.h>
+//#include <time.h>
 #include <unistd.h>
 
 #include "../include/mutka.h"
@@ -12,6 +13,17 @@ static char errmsg[MUTKA_ERRMSG_MAX_SIZE+1] = { 0 };
 static size_t errmsg_size = 0;
 static void (*errmsg_callback)(char*, size_t) = NULL;
 
+
+
+void mutka_sleep_ms(int ms) {
+    /*
+    struct timespec ts;
+    ts.tv_sec = 0;
+    ts.tv_nsec = 1000000 * ms;
+    nanosleep(&ts, NULL);
+    */
+    usleep(1000 * ms);
+}
 
 void mutka_set_errmsg_callback(void(*callback)(char*, size_t)) {
     errmsg_callback = callback; 
@@ -63,10 +75,6 @@ bool mutka_socket_rdready_inms(int socket_fd, int timeout_ms) {
     return i == 1;
 }
 
-
-void mutka_sleep_ms(int ms) {
-    usleep(ms * 1000);
-}
 
 void mutka_dump_strbytes(struct mutka_str* str, const char* label) {
     mutka_dump_bytes(str->bytes, str->size, label);

@@ -25,10 +25,12 @@ void* mutka_srealloc_array
         goto out;
     }
 
+    void* new_ptr = realloc(ptr, element_sizeb * new_num_elements);
+    /*
     void* new_ptr = reallocarray(ptr,
             element_sizeb,
             element_sizeb * new_num_elements);
-
+    */
     if(!new_ptr) {
         mutka_set_errmsg("%s: reallocarray() | %s", __func__, strerror(errno));
         goto out;

@@ -2,6 +2,7 @@
 #define ASCII_CAPTCHA_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 
 bool  ascii_captcha_init();

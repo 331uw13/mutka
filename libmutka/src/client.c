@@ -7,6 +7,7 @@
 #include <pwd.h>
 #include <openssl/rand.h>
 #include <dirent.h>
+#include <sys/stat.h>
 
 #define MUTKA_CLIENT
 #include "../include/client.h"
@@ -584,14 +585,26 @@ static bool p_mutka_read_trusted_peers(struct mutka_client* client) {
     size_t num_trusted_peers_alloc = 1;
     
     client->num_trusted_peers = 0;
-    client->trusted_peers_sha512 
-        = calloc(num_trusted_peers_alloc,
+    client->trusted_peers_sha512 = calloc(num_trusted_peers_alloc,
                 sizeof *client->trusted_peers_sha512);
 
+    struct stat sb;
     while((ent = readdir(dir))) {
+        /*
+        if(stat(ent->d_name, &sb) != 0) {
+            continue;
+        }
+
+        if(!S_ISREG(sb.st_mode)) {
+            continue;
+        }
+        */
+
+        
         if(ent->d_type != DT_REG) {
             continue;
         }
+        
 
         // Resize the array if needed.
         if(client->num_trusted_peers+1 >= num_trusted_peers_alloc) {
@@ -808,7 +821,12 @@ void mutka_disconnect(struct mutka_client* client) {
     // First the threads must be stopped or they 
     // may try to access the data after it was freed.
     if(client->env == MUTKA_ENV_CLIENT) {
-        pthread_cancel(global.recv_thread);
+       
+        pthread_mutex_lock(&client->mutex);
+        client->flags |= MUTKA_CLFLG_SHUTDOWN;
+        pthread_mutex_unlock(&client->mutex);
+
+        //pthread_cancel(global.recv_thread);
         pthread_join(global.recv_thread, NULL);
     }
 
@@ -839,6 +857,12 @@ void* mutka_client_recv_thread(void* arg) {
     bool running = true;
     while(running) {
         pthread_mutex_lock(&client->mutex);
+        if((client->flags & MUTKA_CLFLG_SHUTDOWN)) {
+            printf("%s: shutdown.\n", __func__);
+
+            pthread_mutex_unlock(&client->mutex);
+            break;
+        }
 
         int rd = mutka_recv_incoming_packet(&client->inpacket, client->socket_fd);
   

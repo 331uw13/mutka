@@ -187,7 +187,8 @@ struct mutka_server* mutka_create_server
         goto out;
     }
 
-    explicit_bzero(&server->socket_addr, sizeof(server->socket_addr));
+    memset(&server->socket_addr, 0, sizeof(server->socket_addr));
+    //explicit_bzero(&server->socket_addr, sizeof(server->socket_addr));
 
     server->socket_addr.sin_family = AF_INET;
     server->socket_addr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -251,11 +252,19 @@ void mutka_close_server(struct mutka_server* server) {
         return;
     }
 
-    pthread_cancel(global.acceptor_thread);
-    pthread_cancel(global.recv_thread);
+
+    // Inform threads that we are exiting...
+    pthread_mutex_lock(&server->mutex);
+    server->flags |= MUTKA_SFLG_SHUTDOWN;
+    pthread_mutex_unlock(&server->mutex);
+
+
+    //pthread_cancel(global.acceptor_thread);
+    //pthread_cancel(global.recv_thread);
 
     pthread_join(global.acceptor_thread, NULL);
     pthread_join(global.recv_thread, NULL);
+    
 
     for(uint32_t i = 0; i < server->num_clients; i++) {
         mutka_disconnect(&server->clients[i]);
@@ -462,33 +471,39 @@ void* mutka_server_acceptor_thread_func(void* arg) {
     struct mutka_server* server = (struct mutka_server*)arg;
     while(1) {
         pthread_mutex_lock(&server->mutex);
+        if((server->flags & MUTKA_SFLG_SHUTDOWN)) {
+            printf("%s: shutdown.\n", __func__);
+        
+            pthread_mutex_unlock(&server->mutex);
+            break;
+        }
         
         if(server->num_clients+1 >= server->config.max_clients) {
             pthread_mutex_unlock(&server->mutex);
 
             // Server is full.
-            mutka_sleep_ms(1000);
-            continue;
+            goto skip;
         }
 
-        pthread_mutex_unlock(&server->mutex);
-
+            
         struct mutka_client client;
-        socklen_t socket_len = sizeof(client.socket_addr);
-        client.socket_fd = accept(server->socket_fd, (struct sockaddr*)&client.socket_addr, &socket_len);
+       
+        if(mutka_socket_rdready_inms(server->socket_fd, 100)) {
+            socklen_t socket_len = sizeof(client.socket_addr);
+            client.socket_fd = accept(server->socket_fd, (struct sockaddr*)&client.socket_addr, &socket_len);
 
-        if(client.socket_fd < 0) {
-            mutka_set_errmsg("%s: accept() | %s", __func__, strerror(errno));
-            continue;
-        }
-
-        // Lock server mutex here because accept()
-        // would otherwise cause it to be locked until a connection arrives
-        pthread_mutex_lock(&server->mutex);
- 
-        p_mutka_server_handle_client_connect(server, &client);
+            if(client.socket_fd < 0) {
+                mutka_set_errmsg("%s: accept() | %s", __func__, strerror(errno));
+                goto skip;
+            }
         
+            p_mutka_server_handle_client_connect(server, &client);
+        }
+       
+
+skip:
         pthread_mutex_unlock(&server->mutex);
+        mutka_sleep_ms(500);
     }
     return NULL;
 }
@@ -499,6 +514,12 @@ void* mutka_server_recvdata_thread_func(void* arg) {
 
     while(true) {
         pthread_mutex_lock(&server->mutex);
+
+        if((server->flags & MUTKA_SFLG_SHUTDOWN)) {
+            printf("%s: shutdown.\n", __func__);
+            pthread_mutex_unlock(&server->mutex);
+            break;
+        }
 
         for(size_t i = 0; i < server->num_clients; i++) {
             struct mutka_client* client = &server->clients[i];

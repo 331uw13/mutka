@@ -5,6 +5,7 @@
 #include <openssl/ec.h>
 #include <openssl/pem.h>
 #include <openssl/rand.h>
+#include <openssl/evp.h>
 #include <math.h>
 
 #include "../include/cryptography.h"
