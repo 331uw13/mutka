@@ -24,9 +24,9 @@ rm *.o
 
 
 ar x $OPENSSL/libs/libssl.a
-ar x $OPENSSL/libs/libcrypto.a 
+ar x $OPENSSL/libs/libcrypto.a
 
-
+set +xe
 ar rcs libmutka.a *.o
 rm *.o
 

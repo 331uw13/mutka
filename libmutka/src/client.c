@@ -237,12 +237,14 @@ bool mutka_validate_client_cfg
         goto free_and_out;
     }
 
+    /*
     printf("mutka_cfgdir          = '%s'\n", config->mutka_cfgdir);
     printf("trusted_peers_dir     = '%s'\n", config->trusted_peers_dir);
     printf("private_identity_path = '%s'\n", config->private_identity_path);
     printf("public_identity_path  = '%s'\n", config->public_identity_path);
     printf("trusted_hosts_path    = '%s'\n", config->trusted_hosts_path);
     printf("nickname              = '%s'\n", config->nickname);
+    */
     result = true;
 
     config->flags |= MUTKA_CCFLG_CONFIG_VALIDATED;
@@ -590,17 +592,6 @@ static bool p_mutka_read_trusted_peers(struct mutka_client* client) {
 
     struct stat sb;
     while((ent = readdir(dir))) {
-        /*
-        if(stat(ent->d_name, &sb) != 0) {
-            continue;
-        }
-
-        if(!S_ISREG(sb.st_mode)) {
-            continue;
-        }
-        */
-
-        
         if(ent->d_type != DT_REG) {
             continue;
         }
@@ -847,19 +838,15 @@ void mutka_disconnect(struct mutka_client* client) {
     }
 }
 
-#include <stdio.h> // <- temp
-
 
 void* mutka_client_recv_thread(void* arg) {
-    printf("%s: started\n",__func__);
+    //printf("%s: started\n",__func__);
 
     struct mutka_client* client = (struct mutka_client*)arg;
     bool running = true;
     while(running) {
         pthread_mutex_lock(&client->mutex);
         if((client->flags & MUTKA_CLFLG_SHUTDOWN)) {
-            printf("%s: shutdown.\n", __func__);
-
             pthread_mutex_unlock(&client->mutex);
             break;
         }
@@ -869,20 +856,19 @@ void* mutka_client_recv_thread(void* arg) {
         switch(rd) {
             case M_NEW_PACKET_AVAIL:
                 mutka_client_handle_packet(client);
-                printf("M_NEW_PACKET_AVAIL\n");
+                //printf("M_NEW_PACKET_AVAIL\n");
                 break;
 
             case M_LOST_CONNECTION:
                 client->flags |= MUTKA_CLFLG_SHOULD_DISCONNECT;
-                printf("M_LOST_CONNECTION\n");
+                //printf("M_LOST_CONNECTION\n");
                 break;
 
             case M_PACKET_PARSE_ERR:
-                printf("M_PACKET_PARSE_ERR\n");
+                //printf("M_PACKET_PARSE_ERR\n");
                 break;
 
             case M_ENCRYPTED_RPACKET:
-                printf("M_ENCRYPTED_RPACKET\n");
                 if(mutka_parse_encrypted_rpacket(
                         &client->inpacket,
                         &client->inpacket.raw_packet,
@@ -1070,7 +1056,7 @@ static void p_mutka_client_fully_connected(struct mutka_client* client) {
             client->host_max_clients,
             sizeof(*client->peer_msg_keys));
 
-    printf("\033[32m FULLY CONNECTED! \033[0m\n");
+    //printf("\033[32m FULLY CONNECTED! \033[0m\n");
     mutka_deposit_new_msgkeys(client);
 }
 
@@ -1114,7 +1100,7 @@ static bool p_mutka_client_encrypt_msg_for_next_peer(struct mutka_client* client
     struct mutka_client_peer_msgkeys* peer_msgkeys = NULL;
     while(client->num_peer_msg_keys >= 0) {
         peer_msgkeys = &client->peer_msg_keys[client->num_peer_msg_keys];
-    
+   
         if(p_mutka_client_can_trust_peer(client, &peer_msgkeys->identity_publkey)) {
             break;
         }
@@ -1309,10 +1295,8 @@ static bool p_mutka_client_encrypt_msg_for_next_peer(struct mutka_client* client
             &client->mtdata_keys.hshared_key);
 
 
-    printf("Outgoing Packet Size = %i\n", client->out_raw_packet.size);
-
-
-    printf("%s: %s\n", __func__, client->plaintext_msg.bytes);
+    //printf("Outgoing Packet Size = %i\n", client->out_raw_packet.size);
+    //printf("%s: %s\n", __func__, client->plaintext_msg.bytes);
     client->num_peer_msg_keys--;
 
     if(client->num_peer_msg_keys < 0) {
@@ -1337,7 +1321,7 @@ static void p_handle_received_msg_keys(struct mutka_client* client) {
     // Not sure if there is going to be some features
     // which may also require them in the future.
 
-    printf("%s : %i\n", __func__, client->num_peer_msg_keys);
+    //printf("%s: Num message receivers = %i\n", __func__, client->num_peer_msg_keys);
 
     if(client->num_peer_msg_keys == 0) {
         mutka_set_errmsg("Nobody is online except you.");
@@ -1354,7 +1338,6 @@ static void p_handle_received_msg_keys(struct mutka_client* client) {
 void mutka_client_handle_packet(struct mutka_client* client) {
     // NOTE: client->mutex is locked here.
 
-    printf("%s: (packet id = %i)\n", __func__, client->inpacket.id);
 
     // NOTE: Remember to return from switch statement instead of break
     //       if handling internal packets.
@@ -1447,13 +1430,13 @@ void mutka_client_handle_packet(struct mutka_client* client) {
                     mutka_set_errmsg("MPACKET_MSG_RECV: Failed to decrypt message.");
                 }
                 
-                printf("Decrypted message: '%s'\n", decrypted_msg.bytes);
+                //printf("Decrypted message: '%s'\n", decrypted_msg.bytes);
 
-
+                client->config.message_recv_callback(client, &decrypted_msg);
                 mutka_str_free(&decrypted_msg);
             }
             return;
-
+    
         case STOC_MPACKET_SERVER_MSG_ACK:
             p_mutka_client_encrypt_msg_for_next_peer(client);
             break;
@@ -1578,7 +1561,7 @@ void mutka_client_handle_packet(struct mutka_client* client) {
                     return;
                 }
 
-                printf("\033[32mMetadata key exchange with host is complete.\033[0m\n");
+                //printf("\033[32mMetadata key exchange with host is complete.\033[0m\n");
 
                 // Inform the server everything is ok and we can continue.
                 mutka_rpacket_prep(&client->out_raw_packet, CTOS_MPACKET_INITIAL_SEQ_COMPLETE);
@@ -1609,8 +1592,6 @@ void mutka_client_handle_packet(struct mutka_client* client) {
     }
 
 
-    // TODO: This dont make much senses here.
-    client->packet_received_callback(client);
 }
 
 void mutka_deposit_new_msgkeys(struct mutka_client* client) {
@@ -1682,12 +1663,13 @@ void mutka_deposit_new_msgkeys(struct mutka_client* client) {
 }
 
 void mutka_send_message(struct mutka_client* client, char* message, size_t message_len) {
-   
+  
+    /*
     if((client->flags & MUTKA_CLFLG_SENDING_MSG)) {
         printf("%s: Previous message is still being sent...\n",__func__);
-        // TODO: Message queue.
         return;
     }
+    */
         
     client->flags |= MUTKA_CLFLG_SENDING_MSG;
 

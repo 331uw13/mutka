@@ -18,12 +18,6 @@
 
 // Mutka server flags:
 
-// If a client disconnects while
-// someone has requested other client's message public keys.
-// 'mutka_client.send_peerinfo_index'.
-// For now this problem is solved by adding client disconnects
-// to a queue and processed when this flag is not set.
-#define MUTKA_SFLG_SENDING_CLIENT_MSGPUBLKEYS (1 << 0)
 #define MUTKA_SFLG_SHUTDOWN (1 << 1)
 
 
@@ -54,10 +48,7 @@ struct mutka_server {
     key_mldsa87_publ_t      host_mldsa87_publkey;
 
     struct mutka_client*    clients;
-    uint8_t                num_clients;
-    
-    int*                    client_disconnect_queue; // Client uids who disconnected.
-    uint32_t                num_clients_disconnecting;
+    uint8_t                 num_clients;
 
     struct mutka_raw_packet   out_raw_packet;
     struct mutka_packet       inpacket; // Last received parsed packet.
@@ -77,7 +68,7 @@ struct mutka_server* mutka_create_server
     const char* hostkeys_path
 );
 
-void mutka_server_remove_client
+void mutka_server_disconnect_client
 (
     struct mutka_server* server,
     int client_uid

@@ -30,8 +30,8 @@ void packet_received(struct mutka_server* server, struct mutka_client* client) {
 
 
 bool accept_new_hostkeys() {
-    zprintf("\033[33mGenerate new server keys? (yes/no): \033[0m\n");
-    //fflush(stdout);
+    zprintf("\033[33mGenerate new server keys? (yes/no): \033[0m");
+    fflush(stdout);
 
     char input[6] = { 0 };
     read(STDIN_FILENO, input, sizeof(input));

@@ -60,6 +60,11 @@ struct mutka_client_cfg {
     key_mldsa87_priv_t  identity_privkey;
     key_mldsa87_publ_t  identity_publkey;
 
+    
+    // This is called when client succesfully decrypts a message.
+    void(*message_recv_callback)
+        (struct mutka_client*, struct mutka_str*);
+
 
     // If the server has captcha enabled
     // client must confirm it before it can fully connect.
@@ -146,11 +151,10 @@ struct mutka_client {
     struct mutka_raw_packet  out_raw_packet;
     struct mutka_packet      inpacket; // Last received parsed packet.
     
-    void(*packet_received_callback)(struct mutka_client*);
-
     uint8_t client_nonce[16];
+
 #endif
-#ifdef MUTKA_SERVER
+#ifdef MUTKA_SERVER  // (Not on client side)
 
     // When client requests all other client's
     // message public keys and signature,

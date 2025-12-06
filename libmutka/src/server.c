@@ -154,7 +154,7 @@ struct mutka_server* mutka_create_server
     server->tmp_peer_info_len = 0;
     memset(server->host_mldsa87_privkey.bytes, 0, sizeof(server->host_mldsa87_privkey.bytes));
     memset(server->host_mldsa87_publkey.bytes, 0, sizeof(server->host_mldsa87_publkey.bytes));
-    server->flags = 0; 
+    server->flags = 0;
 
     if(!p_mutka_server_read_hostkeys(server, hostkeys_path)) {
         // Host signature doesnt exist or it was not valid.
@@ -232,8 +232,6 @@ struct mutka_server* mutka_create_server
 
     server->clients = malloc(config.max_clients * sizeof *server->clients);
     server->num_clients = 0;
-    server->client_disconnect_queue = malloc(config.max_clients * sizeof *server->clients);
-    server->num_clients_disconnecting = 0;
 
     pthread_mutex_init(&server->mutex, NULL);
 
@@ -283,14 +281,12 @@ void mutka_close_server(struct mutka_server* server) {
     server->socket_fd = 0;
     
     free(server->clients);
-    free(server->client_disconnect_queue);
     server->clients = NULL;
-    server->client_disconnect_queue = NULL;
 
     free(server);
 }
 
-void mutka_server_remove_client
+void mutka_server_disconnect_client
 (
     struct mutka_server* server,
     int client_uid
@@ -298,41 +294,59 @@ void mutka_server_remove_client
     p_lock_server_mutex_ifneed(server);
 
     if(server->num_clients == 0) {
-        p_unlock_server_mutex_ifneed(server);
-        return;
+        goto out;
     }
 
-    int remove_index = -1;
+    uint8_t disconnect_index = -1;
 
     for(uint8_t i = 0; i < server->num_clients; i++) {
         if(server->clients[i].uid == client_uid) {
-            remove_index = i;
+            disconnect_index = i;
             break;
         }
     }
-   
-    if(remove_index >= 0) {
-        mutka_disconnect(&server->clients[remove_index]);
-
-        // Shift remaining clients from right to left.
-        for(uint8_t i = remove_index; i < server->num_clients-1; i++) {
-            server->clients[i] = server->clients[i+1];
-        }
-        server->num_clients--;
-    }
-    else {
-        mutka_set_errmsg("Cant remove client, it doesnt exist. (uid = %i)",
+    if(disconnect_index < 0) {
+        mutka_set_errmsg("Cant disconnect client(%i). It doesnt exist",
                 client_uid);
+        goto out;
+    }
+  
+
+    mutka_disconnect(&server->clients[disconnect_index]);
+
+    // Shift remaining clients from right to left.
+    for(uint8_t i = disconnect_index; i < server->num_clients-1; i++) {
+        server->clients[i] = server->clients[i+1];
+    }
+    server->num_clients--;
+
+
+
+    // Sync clients 'send_peerinfo_index'
+    for(uint8_t i = 0; i < server->num_clients; i++) {
+        struct mutka_client* client = &server->clients[i];
+        if(client->send_peerinfo_index == 0) {
+            continue;
+        }
+        if(client->send_peerinfo_index > disconnect_index) {
+            client->send_peerinfo_index--;
+        }
     }
 
+    
+
+
+out:
     p_unlock_server_mutex_ifneed(server);
 }
 
+/*
 static void p_mutka_server_process_disconnect_queue(struct mutka_server* server) {
-    if((server->flags & MUTKA_SFLG_SENDING_CLIENT_MSGPUBLKEYS)) {
-        return; // 'mutka_client.send_peerinfo_index' may go out of sync.
-    }
     
+    // Disconnect queue is not needed because just decrement
+    // send_peer_index counter if its above index who was removed.
+    // --------------------------------------------------------
+
     for(uint32_t i = 0; i < server->num_clients_disconnecting; i++) {
         mutka_server_remove_client(server, server->client_disconnect_queue[i]);
     }
@@ -363,6 +377,7 @@ static void p_mutka_server_client_disconnecting
     server->client_disconnect_queue
         [server->num_clients_disconnecting++] = client->uid;
 }
+*/
 
 static void p_mutka_server_make_client_uid
 (
@@ -532,7 +547,7 @@ void* mutka_server_recvdata_thread_func(void* arg) {
 
                 case M_LOST_CONNECTION:
                     server->config.client_disconnected_callback(server, client);
-                    p_mutka_server_client_disconnecting(server, client);
+                    mutka_server_disconnect_client(server, client->uid);
                     printf("%s: M_LOST_CONNECTION\n", __func__);
                     break;
 
@@ -546,8 +561,6 @@ void* mutka_server_recvdata_thread_func(void* arg) {
                     break;
             }
         }
-
-        p_mutka_server_process_disconnect_queue(server);
 
         pthread_mutex_unlock(&server->mutex);
         mutka_sleep_ms(100);
@@ -683,20 +696,12 @@ static void p_mutka_server_nomore_peer_msgkeys
     struct mutka_client* client
 ){
     client->send_peerinfo_index = 0;
-    server->flags &= ~MUTKA_SFLG_SENDING_CLIENT_MSGPUBLKEYS;
     mutka_rpacket_prep(&server->out_raw_packet, STOC_MPACKET_ALL_PEER_PUBLKEYS_SENT);
 
     mutka_send_encrypted_rpacket(
             client->socket_fd,
             &server->out_raw_packet,
             &client->mtdata_keys.hshared_key);
-
-    // -------------------------------------------------------
-    // "~MUTKA_SFLG_SENDING_CLIENT_MSGPUBLKEYS"
-    // ... Ok cool but what about if the client dont respond.
-    //     All disconnects will hang.
-    // FIXME ^^^
-    // -------------------------------------------------------
 }
 
 struct mutka_client* mutka_server_find_client_by_uid
@@ -766,6 +771,13 @@ void mutka_server_handle_packet
                         receiver->socket_fd,
                         &server->inpacket.raw_packet,
                         &receiver->mtdata_keys.hshared_key);
+
+                // Tell message sender we send the message cipher forward.
+                mutka_rpacket_prep(&server->out_raw_packet, STOC_MPACKET_SERVER_MSG_ACK);
+                mutka_send_encrypted_rpacket(
+                        client->socket_fd,
+                        &server->out_raw_packet,
+                        &client->mtdata_keys.hshared_key);
             }
             return;
 
@@ -774,16 +786,15 @@ void mutka_server_handle_packet
                 return;
             }
             {
-                server->flags |= MUTKA_SFLG_SENDING_CLIENT_MSGPUBLKEYS;
               
                 bool is_last_peer = false;
                 struct mutka_client* peer 
                     = p_mutka_server_get_client_next_receiver(server, client, &is_last_peer);
+                
                 if(!peer) {
                     p_mutka_server_nomore_peer_msgkeys(server, client);
                     return;
                 }
-
 
                 // The client who asked other keys from the server
                 // will not want to include their own.
@@ -797,6 +808,7 @@ void mutka_server_handle_packet
                         return;
                     }
                 }
+
                 
                 mutka_rpacket_prep(&server->out_raw_packet, STOC_MPACKET_PEER_PUBLKEYS);
                
@@ -835,19 +847,6 @@ void mutka_server_handle_packet
                         client->socket_fd,
                         &server->out_raw_packet,
                         &client->mtdata_keys.hshared_key);
-
-                /*
-                client->send_peerinfo_index++;
-                if(client->send_peerinfo_index >= server->num_clients) {
-                    client->send_peerinfo_index = 0;
-                    server->flags &= ~MUTKA_SFLG_SENDING_CLIENT_MSGPUBLKEYS;
-                    
-                    printf("UNSET ~MUTKA_SFLG_SENDING_CLIENT_MSGPUBLKEYS\n");
-                    // ... Ok cool but what about if the client dont respond.
-                    //     All disconnects will hang.
-                    // FIXME ^^^
-                }
-                */
             }
             return;
 
@@ -911,8 +910,7 @@ void mutka_server_handle_packet
                     client->captcha_retries_left--;
                     printf("%i captcha retries left: %i\n", client->uid, client->captcha_retries_left);
                     if(client->captcha_retries_left <= 0) {
-                        //mutka_server_remove_client(server, client);
-                        p_mutka_server_client_disconnecting(server, client);
+                        mutka_server_disconnect_client(server, client->uid);
                         return;
                     }
                     p_mutka_server_send_captcha_challenge(server, client);
@@ -1004,5 +1002,4 @@ void mutka_server_handle_packet
 
     server->config.packet_received_callback(server, client);
 }
-
 
